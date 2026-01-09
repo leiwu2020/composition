@@ -163,20 +163,25 @@ def payment_success():
         
         # If this is a plan change, cancel the old subscription first
         if is_plan_change:
-            old_subscription = Subscription.query.filter_by(
-                user_id=current_user.id,
-                status='active'
-            ).filter(Subscription.plan_type != plan_type).first()
+            # Find all active subscriptions for this user (except the new one)
+            old_subscriptions = Subscription.query.filter(
+                Subscription.user_id == current_user.id,
+                Subscription.status == 'active',
+                Subscription.stripe_subscription_id != subscription_id
+            ).all()
             
-            if old_subscription and old_subscription.stripe_subscription_id:
-                try:
-                    stripe.Subscription.modify(
-                        old_subscription.stripe_subscription_id,
-                        cancel_at_period_end=True
-                    )
-                    old_subscription.status = 'canceled'
-                except:
-                    pass
+            for old_sub in old_subscriptions:
+                if old_sub.stripe_subscription_id:
+                    try:
+                        stripe.Subscription.modify(
+                            old_sub.stripe_subscription_id,
+                            cancel_at_period_end=True
+                        )
+                    except Exception as e:
+                        print(f"Error canceling old subscription: {e}")
+                # Mark old subscription as canceled
+                old_sub.status = 'canceled'
+                old_sub.updated_at = datetime.utcnow()
         
         # Create or update subscription in database
         subscription = Subscription.query.filter_by(
@@ -184,11 +189,12 @@ def payment_success():
         ).first()
         
         if not subscription:
+            # New subscription
             subscription = Subscription(
                 user_id=current_user.id,
                 stripe_subscription_id=subscription_id,
                 stripe_customer_id=stripe_subscription.customer,
-                status=stripe_subscription.status,
+                status='active',  # Set to active explicitly
                 plan_type=plan_type,
                 amount=stripe_subscription.items.data[0].price.unit_amount / 100,
                 currency=stripe_subscription.currency.upper(),
@@ -197,15 +203,33 @@ def payment_success():
             )
             db.session.add(subscription)
         else:
-            subscription.status = stripe_subscription.status
-            subscription.plan_type = plan_type
+            # Update existing subscription
+            subscription.status = 'active'  # Ensure it's active
+            subscription.plan_type = plan_type  # Update plan type
+            subscription.stripe_customer_id = stripe_subscription.customer
+            subscription.amount = stripe_subscription.items.data[0].price.unit_amount / 100
+            subscription.currency = stripe_subscription.currency.upper()
             subscription.current_period_start = datetime.fromtimestamp(stripe_subscription.current_period_start)
             subscription.current_period_end = datetime.fromtimestamp(stripe_subscription.current_period_end)
             subscription.updated_at = datetime.utcnow()
         
         db.session.commit()
         
-        flash('Subscription activated successfully!', 'success')
+        # Refresh the user object to clear any cached data
+        db.session.refresh(current_user)
+        
+        # Expire relationship cache to force fresh query
+        from sqlalchemy.orm import object_session
+        session_obj = object_session(current_user)
+        if session_obj:
+            session_obj.expire(current_user, ['subscriptions'])
+        
+        # Verify the plan change
+        new_plan = current_user.get_plan()
+        plan_name = PLANS.get(plan_type, {}).get('name', plan_type)
+        print(f"Payment success - User: {current_user.username}, Plan updated to: {plan_type} ({plan_name})")
+        
+        flash(f'Subscription activated successfully! Your plan has been updated to {plan_name}.', 'success')
         return redirect(url_for('payments.dashboard'))
     
     except Exception as e:
