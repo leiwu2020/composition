@@ -189,13 +189,24 @@ def payment_success():
         ).first()
         
         if not subscription:
-            # New subscription
+            # New subscription - check if user has any existing subscriptions first
+            # Cancel any existing active subscriptions
+            existing_subs = Subscription.query.filter(
+                Subscription.user_id == current_user.id,
+                Subscription.status == 'active'
+            ).all()
+            
+            for old_sub in existing_subs:
+                old_sub.status = 'canceled'
+                old_sub.updated_at = datetime.utcnow()
+            
+            # Create new subscription
             subscription = Subscription(
                 user_id=current_user.id,
                 stripe_subscription_id=subscription_id,
                 stripe_customer_id=stripe_subscription.customer,
                 status='active',  # Set to active explicitly
-                plan_type=plan_type,
+                plan_type=plan_type,  # Use plan_type from metadata, not from Stripe
                 amount=stripe_subscription.items.data[0].price.unit_amount / 100,
                 currency=stripe_subscription.currency.upper(),
                 current_period_start=datetime.fromtimestamp(stripe_subscription.current_period_start),
@@ -205,7 +216,7 @@ def payment_success():
         else:
             # Update existing subscription
             subscription.status = 'active'  # Ensure it's active
-            subscription.plan_type = plan_type  # Update plan type
+            subscription.plan_type = plan_type  # Update plan type from metadata
             subscription.stripe_customer_id = stripe_subscription.customer
             subscription.amount = stripe_subscription.items.data[0].price.unit_amount / 100
             subscription.currency = stripe_subscription.currency.upper()
@@ -215,19 +226,36 @@ def payment_success():
         
         db.session.commit()
         
-        # Refresh the user object to clear any cached data
-        db.session.refresh(current_user)
-        
-        # Expire relationship cache to force fresh query
+        # Force refresh - expire all cached relationships
         from sqlalchemy.orm import object_session
         session_obj = object_session(current_user)
         if session_obj:
-            session_obj.expire(current_user, ['subscriptions'])
+            # Expire all relationships
+            session_obj.expire(current_user)
+            # Also expire the subscription object
+            if subscription:
+                session_obj.expire(subscription)
         
-        # Verify the plan change
-        new_plan = current_user.get_plan()
+        # Verify the plan change by querying fresh from database
+        db.session.refresh(subscription)
+        print(f"Payment success - Subscription ID: {subscription.id}, Plan: {subscription.plan_type}, Status: {subscription.status}")
+        
+        # Get fresh user data
+        fresh_user = User.query.get(current_user.id)
+        new_plan = fresh_user.get_plan()
         plan_name = PLANS.get(plan_type, {}).get('name', plan_type)
-        print(f"Payment success - User: {current_user.username}, Plan updated to: {plan_type} ({plan_name})")
+        print(f"Payment success - User: {fresh_user.username}, Plan updated to: {new_plan} (expected: {plan_type})")
+        
+        if new_plan != plan_type:
+            print(f"WARNING: Plan mismatch! Expected {plan_type}, got {new_plan}")
+            # Force update by querying directly
+            active_sub = Subscription.query.filter(
+                Subscription.user_id == fresh_user.id,
+                Subscription.status == 'active',
+                Subscription.plan_type == plan_type
+            ).first()
+            if active_sub:
+                print(f"Found active subscription with plan {active_sub.plan_type}")
         
         flash(f'Subscription activated successfully! Your plan has been updated to {plan_name}.', 'success')
         return redirect(url_for('payments.dashboard'))

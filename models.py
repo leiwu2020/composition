@@ -67,19 +67,21 @@ class User(UserMixin, db.Model):
         """Get the active subscription if any"""
         # First try to get an active subscription (status='active' and not expired)
         now = datetime.utcnow()
+        
+        # Query for active subscriptions, ordered by most recent first
         subscription = Subscription.query.filter(
             Subscription.user_id == self.id,
             Subscription.status == 'active'
         ).filter(
             (Subscription.current_period_end.is_(None)) | 
             (Subscription.current_period_end > now)
-        ).order_by(Subscription.created_at.desc()).first()
+        ).order_by(Subscription.updated_at.desc(), Subscription.created_at.desc()).first()
         
-        # If no active subscription, try to get any subscription
+        # If no active subscription, try to get any subscription (for free plan users)
         if not subscription:
             subscription = Subscription.query.filter_by(
                 user_id=self.id
-            ).order_by(Subscription.created_at.desc()).first()
+            ).order_by(Subscription.updated_at.desc(), Subscription.created_at.desc()).first()
         
         # If no subscription at all, return None (user will default to free plan)
         return subscription
