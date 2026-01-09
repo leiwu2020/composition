@@ -238,27 +238,46 @@ def payment_success():
         
         # CRITICAL: ALWAYS cancel ALL existing active subscriptions before creating/updating new one
         # This ensures the new paid subscription is the only active one
-        # (Otherwise, old free subscriptions will still be active and get picked up)
-        old_subscriptions = Subscription.query.filter(
+        # IMPORTANT: Use fresh query to bypass cache, and cancel ALL active subscriptions
+        # (not just those with different stripe_subscription_id, because new subscription might not exist yet)
+        old_subscriptions = db.session.query(Subscription).filter(
             Subscription.user_id == current_user.id,
-            Subscription.status == 'active',
-            Subscription.stripe_subscription_id != subscription_id
+            Subscription.status == 'active'
         ).all()
         
-        print(f"Found {len(old_subscriptions)} existing active subscriptions to cancel")
+        print(f"Payment success - Found {len(old_subscriptions)} existing active subscriptions to cancel")
+        canceled_count = 0
         for old_sub in old_subscriptions:
+            # Skip the subscription we're about to create/update (if it already exists)
+            if old_sub.stripe_subscription_id == subscription_id:
+                print(f"Payment success - Skipping subscription {old_sub.id} - it's the one we're updating")
+                continue
+                
             if old_sub.stripe_subscription_id:
                 try:
                     stripe.Subscription.modify(
                         old_sub.stripe_subscription_id,
                         cancel_at_period_end=True
                     )
+                    print(f"Payment success - Cancelled old subscription in Stripe: {old_sub.stripe_subscription_id}")
                 except Exception as e:
-                    print(f"Error canceling old subscription in Stripe: {e}")
-            # Mark old subscription as canceled
+                    print(f"Payment success - Error canceling old subscription in Stripe: {e}")
+            # Mark old subscription as canceled IMMEDIATELY
             old_sub.status = 'canceled'
             old_sub.updated_at = datetime.utcnow()
-            print(f"Cancelled old subscription: Plan={old_sub.plan_type}, ID={old_sub.id}, Stripe ID={old_sub.stripe_subscription_id}")
+            canceled_count += 1
+            print(f"Payment success - Cancelled old subscription in DB: Plan={old_sub.plan_type}, ID={old_sub.id}, Stripe ID={old_sub.stripe_subscription_id}")
+        
+        # Commit the cancellations BEFORE creating new subscription
+        if canceled_count > 0:
+            db.session.commit()
+            print(f"Payment success - Committed cancellation of {canceled_count} old subscriptions")
+            
+            # Force expire cache after cancellation
+            from sqlalchemy.orm import object_session
+            session_obj = object_session(current_user)
+            if session_obj:
+                session_obj.expire_all()
         
         # Create or update subscription in database
         # Use fresh query to bypass cache
