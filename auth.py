@@ -58,11 +58,11 @@ def register():
                 return jsonify({
                     'success': True,
                     'message': 'Registration successful',
-                    'redirect': url_for('main.index')
+                    'redirect': '/'
                 })
             
             flash('Registration successful!', 'success')
-            return redirect(url_for('main.index'))
+            return redirect('/')
             
         except Exception as e:
             db.session.rollback()
@@ -105,12 +105,12 @@ def login():
                 return jsonify({
                     'success': True,
                     'message': 'Login successful',
-                    'redirect': url_for('main.index')
+                    'redirect': '/'
                 })
             
             flash('Login successful!', 'success')
             next_page = request.args.get('next')
-            return redirect(next_page) if next_page else redirect(url_for('main.index'))
+            return redirect(next_page) if next_page else redirect('/')
         else:
             if request.is_json:
                 return jsonify({'error': 'Invalid username or password', 'success': False}), 401
