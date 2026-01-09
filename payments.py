@@ -2,14 +2,23 @@ from flask import Blueprint, render_template, request, jsonify, redirect, url_fo
 from flask_login import login_required, current_user
 from models import db, User, Subscription, PLANS
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
 import stripe
 import os
 
+# Load environment variables first
+load_dotenv()
+
 payments_bp = Blueprint('payments', __name__)
 
-# Initialize Stripe
-stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
+# Initialize Stripe - load key from environment
+STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY')
 STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY', '')
+
+if STRIPE_SECRET_KEY:
+    stripe.api_key = STRIPE_SECRET_KEY
+else:
+    print("WARNING: STRIPE_SECRET_KEY not found in environment variables!")
 
 # Plan prices (in cents) - moved to models.py but keeping here for backward compatibility
 try:
@@ -35,6 +44,17 @@ def pricing():
 def create_checkout_session():
     """Create Stripe checkout session for subscription"""
     try:
+        # Verify Stripe API key is set
+        if not stripe.api_key:
+            # Try to reload from environment
+            load_dotenv()
+            stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
+            if not stripe.api_key:
+                return jsonify({
+                    'error': 'Stripe API key not configured. Please contact support.',
+                    'success': False
+                }), 500
+        
         plan_type = request.json.get('plan_type', 'basic')
         
         if plan_type == 'free':
