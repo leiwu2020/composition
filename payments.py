@@ -320,15 +320,22 @@ def payment_success():
         db.session.commit()
         print(f"Payment success - Committed subscription: ID={subscription.id}, Plan={subscription.plan_type}, Status={subscription.status}, User ID={subscription.user_id}")
         
-        # CRITICAL: Verify it was saved correctly by querying with a completely fresh session
-        # Close the current session and start a new one to ensure we're reading from disk
-        db.session.close()
-        db.session.begin()
+        # CRITICAL: Flush and refresh to ensure subscription is in database
+        db.session.flush()
+        db.session.refresh(subscription)
+        print(f"Payment success - After refresh: ID={subscription.id}, Plan={subscription.plan_type}, Status={subscription.status}, User ID={subscription.user_id}")
         
-        # Now verify with a completely fresh query
+        # Verify it was saved correctly by querying with a completely fresh query
+        # Expire the subscription object first to force a fresh read
+        from sqlalchemy.orm import object_session
+        sub_session = object_session(subscription)
+        if sub_session:
+            sub_session.expire(subscription)
+        
+        # Now verify with a completely fresh query (bypassing all caches)
         verify_sub = db.session.query(Subscription).filter_by(id=subscription.id).first()
         if verify_sub:
-            print(f"Payment success - Verification query (fresh session): ID={verify_sub.id}, Plan={verify_sub.plan_type}, Status={verify_sub.status}, User ID={verify_sub.user_id}")
+            print(f"Payment success - Verification query (fresh): ID={verify_sub.id}, Plan={verify_sub.plan_type}, Status={verify_sub.status}, User ID={verify_sub.user_id}")
             # Double-check the status is active
             if verify_sub.status != 'active':
                 print(f"Payment success - CRITICAL: Subscription status is '{verify_sub.status}', fixing to 'active'")
@@ -336,6 +343,8 @@ def payment_success():
                 verify_sub.updated_at = datetime.utcnow()
                 db.session.commit()
                 print(f"Payment success - Fixed subscription status to 'active'")
+                # Update subscription reference
+                subscription = verify_sub
         else:
             print(f"Payment success - CRITICAL ERROR: Subscription {subscription.id} not found after commit! Recreating...")
             # Recreate the subscription
