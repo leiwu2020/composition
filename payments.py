@@ -223,10 +223,22 @@ def payment_cancel():
 @login_required
 def dashboard():
     """User subscription dashboard"""
+    # Refresh user object to get latest subscription data
+    db.session.refresh(current_user)
+    
+    # Expire relationship cache to force fresh query
+    from sqlalchemy.orm import object_session
+    session = object_session(current_user)
+    if session:
+        session.expire(current_user, ['subscriptions'])
+    
     subscription = current_user.get_active_subscription()
     plan_type = current_user.get_plan()
     plan = PLANS.get(plan_type, PLANS['free'])
     remaining_queries = current_user.get_remaining_queries()
+    
+    # Debug logging
+    print(f"Dashboard - User: {current_user.username}, Plan: {plan_type}, Subscription: {subscription.plan_type if subscription else 'None'}")
     
     return render_template('dashboard.html', 
                          subscription=subscription,

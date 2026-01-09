@@ -65,10 +65,14 @@ class User(UserMixin, db.Model):
     
     def get_active_subscription(self):
         """Get the active subscription if any"""
-        # First try to get an active subscription
+        # First try to get an active subscription (status='active' and not expired)
+        now = datetime.utcnow()
         subscription = Subscription.query.filter(
             Subscription.user_id == self.id,
             Subscription.status == 'active'
+        ).filter(
+            (Subscription.current_period_end.is_(None)) | 
+            (Subscription.current_period_end > now)
         ).order_by(Subscription.created_at.desc()).first()
         
         # If no active subscription, try to get any subscription
