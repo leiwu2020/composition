@@ -381,11 +381,31 @@ def payment_success():
                 new_plan = fresh_user.get_plan()
                 print(f"Payment success - After canceling duplicates, plan is now: {new_plan}")
             elif len(all_active) == 0:
-                print(f"Payment success - ERROR: No active subscriptions found! This should not happen.")
-                # Force create the subscription again if it doesn't exist
-                if not subscription:
-                    print(f"Payment success - Attempting to recreate subscription...")
-                    subscription = Subscription(
+                print(f"Payment success - CRITICAL ERROR: No active subscriptions found after payment!")
+                print(f"Payment success - The subscription we just created: ID={subscription.id}, Plan={subscription.plan_type}, Status={subscription.status}, User ID={subscription.user_id}")
+                # Force check the subscription we just created
+                check_sub = db.session.query(Subscription).filter_by(id=subscription.id).first()
+                if check_sub:
+                    print(f"Payment success - Subscription exists in DB: ID={check_sub.id}, Plan={check_sub.plan_type}, Status={check_sub.status}, User ID={check_sub.user_id}")
+                    if check_sub.status != 'active':
+                        print(f"Payment success - FIXING: Subscription status is '{check_sub.status}', setting to 'active'")
+                        check_sub.status = 'active'
+                        check_sub.updated_at = datetime.utcnow()
+                        db.session.commit()
+                        print(f"Payment success - Fixed subscription status. Re-querying plan...")
+                        # Re-query plan
+                        if session_obj:
+                            session_obj.expire_all()
+                        fresh_user = db.session.query(User).filter_by(id=current_user.id).first()
+                        new_plan = fresh_user.get_plan()
+                        print(f"Payment success - After fixing status, plan is now: {new_plan}")
+                    else:
+                        print(f"Payment success - Subscription status is already 'active', but get_plan() returned 'free'")
+                        print(f"Payment success - This suggests get_active_subscription() is not finding it")
+                else:
+                    print(f"Payment success - ERROR: Subscription {subscription.id} doesn't exist in DB! Recreating...")
+                    # Recreate subscription
+                    new_sub = Subscription(
                         user_id=current_user.id,
                         stripe_subscription_id=subscription_id,
                         stripe_customer_id=stripe_subscription.customer if hasattr(stripe_subscription, 'customer') else None,
@@ -396,9 +416,17 @@ def payment_success():
                         current_period_start=datetime.fromtimestamp(stripe_subscription.current_period_start) if hasattr(stripe_subscription, 'current_period_start') else datetime.utcnow(),
                         current_period_end=datetime.fromtimestamp(stripe_subscription.current_period_end) if hasattr(stripe_subscription, 'current_period_end') else datetime.utcnow() + timedelta(days=30)
                     )
-                    db.session.add(subscription)
+                    db.session.add(new_sub)
                     db.session.commit()
-                    print(f"Payment success - Recreated subscription: ID={subscription.id}, Plan={subscription.plan_type}")
+                    print(f"Payment success - Recreated subscription: ID={new_sub.id}, Plan={new_sub.plan_type}, Status={new_sub.status}, User ID={new_sub.user_id}")
+                    # Update subscription reference
+                    subscription = new_sub
+                    # Re-query plan
+                    if session_obj:
+                        session_obj.expire_all()
+                    fresh_user = db.session.query(User).filter_by(id=current_user.id).first()
+                    new_plan = fresh_user.get_plan()
+                    print(f"Payment success - After recreating, plan is now: {new_plan}")
         
         flash(f'Subscription activated successfully! Your plan has been updated to {plan_name}.', 'success')
         return redirect(url_for('payments.dashboard'))
