@@ -65,23 +65,35 @@ class User(UserMixin, db.Model):
     
     def get_active_subscription(self):
         """Get the active subscription if any"""
+        # Force fresh query - expire all caches
+        from sqlalchemy.orm import object_session
+        session = object_session(self)
+        if session:
+            session.expire_all()
+        
         # First try to get an active subscription (status='active' and not expired)
         now = datetime.utcnow()
         
         # Query for active subscriptions, ordered by most recent first
+        # IMPORTANT: Only get subscriptions with status='active' (exclude 'canceled')
         subscription = Subscription.query.filter(
             Subscription.user_id == self.id,
-            Subscription.status == 'active'
+            Subscription.status == 'active'  # CRITICAL: Only active subscriptions
         ).filter(
             (Subscription.current_period_end.is_(None)) | 
             (Subscription.current_period_end > now)
         ).order_by(Subscription.updated_at.desc(), Subscription.created_at.desc()).first()
         
-        # If no active subscription, try to get any subscription (for free plan users)
-        if not subscription:
+        # Debug: Log what we found
+        if subscription:
+            print(f"get_active_subscription() found: ID={subscription.id}, Plan={subscription.plan_type}, Status={subscription.status}, Updated={subscription.updated_at}")
+        else:
+            # If no active subscription, try to get any subscription (for free plan users)
             subscription = Subscription.query.filter_by(
                 user_id=self.id
             ).order_by(Subscription.updated_at.desc(), Subscription.created_at.desc()).first()
+            if subscription:
+                print(f"get_active_subscription() found (non-active): ID={subscription.id}, Plan={subscription.plan_type}, Status={subscription.status}")
         
         # If no subscription at all, return None (user will default to free plan)
         return subscription

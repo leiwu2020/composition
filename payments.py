@@ -230,7 +230,9 @@ def payment_success():
             subscription.updated_at = datetime.utcnow()
             print(f"Updated existing subscription: Plan={plan_type}, ID={subscription.id}")
         
+        # Commit the new/updated subscription
         db.session.commit()
+        print(f"Committed new subscription: ID={subscription.id}, Plan={subscription.plan_type}, Status={subscription.status}")
         
         # CRITICAL: Force a complete refresh of all data
         # First, expire all cached relationships
@@ -241,8 +243,15 @@ def payment_success():
             session_obj.expire_all()
         
         # Verify the subscription was created/updated correctly by querying fresh from DB
-        db.session.refresh(subscription)
-        print(f"Payment success - Subscription ID: {subscription.id}, Plan: {subscription.plan_type}, Status: {subscription.status}")
+        # Use a new query to bypass any cache
+        fresh_subscription = db.session.query(Subscription).filter_by(id=subscription.id).first()
+        print(f"Payment success - Fresh subscription query: ID={fresh_subscription.id}, Plan={fresh_subscription.plan_type}, Status={fresh_subscription.status}")
+        
+        # Verify all subscriptions for this user
+        all_subs = db.session.query(Subscription).filter_by(user_id=current_user.id).all()
+        print(f"All subscriptions for user after payment:")
+        for sub in all_subs:
+            print(f"  - ID: {sub.id}, Plan: {sub.plan_type}, Status: {sub.status}, Updated: {sub.updated_at}")
         
         # Get completely fresh user data from database (bypassing all caches)
         fresh_user = db.session.query(User).filter_by(id=current_user.id).first()
@@ -258,18 +267,27 @@ def payment_success():
         print(f"Payment success - User: {fresh_user.username}, Plan updated to: {new_plan} (expected: {plan_type})")
         
         if new_plan != plan_type:
-            print(f"WARNING: Plan mismatch! Expected {plan_type}, got {new_plan}")
+            print(f"ERROR: Plan mismatch! Expected {plan_type}, got {new_plan}")
             # Query directly to see what's happening
-            all_active = Subscription.query.filter(
+            all_active = db.session.query(Subscription).filter(
                 Subscription.user_id == fresh_user.id,
                 Subscription.status == 'active'
             ).order_by(Subscription.updated_at.desc()).all()
             print(f"All active subscriptions for user: {[(s.id, s.plan_type, s.status, s.updated_at) for s in all_active]}")
             
-            # Force update: ensure the most recent subscription is the one being used
-            if all_active:
-                latest = all_active[0]
-                print(f"Latest subscription: ID={latest.id}, Plan={latest.plan_type}, Status={latest.status}")
+            # If there's a mismatch, there might be multiple active subscriptions
+            # Cancel all except the newest one
+            if len(all_active) > 1:
+                print(f"WARNING: Multiple active subscriptions found! Canceling all except the newest")
+                for sub in all_active[1:]:  # Skip the first (newest) one
+                    sub.status = 'canceled'
+                    sub.updated_at = datetime.utcnow()
+                db.session.commit()
+                # Re-query plan
+                session_obj.expire_all()
+                fresh_user = db.session.query(User).filter_by(id=current_user.id).first()
+                new_plan = fresh_user.get_plan()
+                print(f"After canceling duplicates, plan is now: {new_plan}")
         
         flash(f'Subscription activated successfully! Your plan has been updated to {plan_name}.', 'success')
         return redirect(url_for('payments.dashboard'))
