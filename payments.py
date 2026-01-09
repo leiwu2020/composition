@@ -186,7 +186,7 @@ def payment_success():
     session_id = request.args.get('session_id')
     
     if not session_id:
-        flash('Invalid payment session', 'error')
+        # No session_id - silently redirect (might be from logout or other redirect)
         return redirect(url_for('payments.pricing'))
     
     try:
@@ -194,7 +194,7 @@ def payment_success():
         session = stripe.checkout.Session.retrieve(session_id)
         
         # Verify it belongs to current user
-        if session.metadata.get('user_id') != str(current_user.id):
+        if not session.metadata or session.metadata.get('user_id') != str(current_user.id):
             flash('Invalid payment session', 'error')
             return redirect(url_for('payments.pricing'))
         
@@ -212,8 +212,10 @@ def payment_success():
         
         # Safely get subscription items
         if not hasattr(stripe_subscription, 'items') or not stripe_subscription.items:
-            flash('Invalid subscription data', 'error')
-            return redirect(url_for('payments.pricing'))
+            # Subscription might be in a transitional state - log and redirect gracefully
+            print(f"Payment success - Warning: Subscription {subscription_id} has no items attribute")
+            flash('Subscription is being processed. Please check your dashboard in a moment.', 'info')
+            return redirect(url_for('payments.dashboard'))
         
         # Handle both dict and object access for items
         if isinstance(stripe_subscription.items, dict):
@@ -223,8 +225,10 @@ def payment_success():
             items_data = stripe_subscription.items.data if hasattr(stripe_subscription.items, 'data') else []
         
         if not items_data or len(items_data) == 0:
-            flash('Invalid subscription - no items found', 'error')
-            return redirect(url_for('payments.pricing'))
+            # Subscription might be in a transitional state - log and redirect gracefully
+            print(f"Payment success - Warning: Subscription {subscription_id} has no items")
+            flash('Subscription is being processed. Please check your dashboard in a moment.', 'info')
+            return redirect(url_for('payments.dashboard'))
         
         # Get price from first item
         first_item = items_data[0]
