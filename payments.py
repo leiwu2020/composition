@@ -495,29 +495,6 @@ def payment_success():
             else:
                 print(f"Payment success - ERROR: No active subscription found in final check!")
         
-        # Final verification before redirect
-        # Force one more complete refresh to ensure everything is saved
-        db.session.commit()
-        if session_obj:
-            session_obj.expire_all()
-        
-        # Get one final fresh user to verify
-        final_user = db.session.query(User).filter_by(id=current_user.id).first()
-        final_plan = final_user.get_plan()
-        print(f"Payment success - FINAL VERIFICATION: User={final_user.username}, Plan={final_plan} (expected: {plan_type})")
-        
-        if final_plan != plan_type:
-            print(f"Payment success - WARNING: Final plan check shows {final_plan}, expected {plan_type}")
-            # Force one more query
-            final_active = db.session.query(Subscription).filter(
-                Subscription.user_id == final_user.id,
-                Subscription.status == 'active'
-            ).order_by(Subscription.updated_at.desc()).first()
-            if final_active:
-                print(f"Payment success - Active subscription found: ID={final_active.id}, Plan={final_active.plan_type}, Status={final_active.status}")
-            else:
-                print(f"Payment success - ERROR: No active subscription found in final check!")
-        
         flash(f'Subscription activated successfully! Your plan has been updated to {plan_name}.', 'success')
         return redirect(url_for('payments.dashboard'))
     
