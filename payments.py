@@ -168,11 +168,41 @@ def payment_success():
         
         # Retrieve the subscription
         subscription_id = session.subscription
+        if not subscription_id:
+            flash('Invalid payment session - no subscription found', 'error')
+            return redirect(url_for('payments.pricing'))
+        
         stripe_subscription = stripe.Subscription.retrieve(subscription_id)
         
         # Get plan type from metadata
         plan_type = session.metadata.get('plan_type', 'basic')
         is_plan_change = session.metadata.get('is_plan_change', 'false') == 'true'
+        
+        # Safely get subscription items
+        if not hasattr(stripe_subscription, 'items') or not stripe_subscription.items:
+            flash('Invalid subscription data', 'error')
+            return redirect(url_for('payments.pricing'))
+        
+        # Handle both dict and object access for items
+        if isinstance(stripe_subscription.items, dict):
+            items_data = stripe_subscription.items.get('data', [])
+        else:
+            # It's a Stripe object with data attribute
+            items_data = stripe_subscription.items.data if hasattr(stripe_subscription.items, 'data') else []
+        
+        if not items_data or len(items_data) == 0:
+            flash('Invalid subscription - no items found', 'error')
+            return redirect(url_for('payments.pricing'))
+        
+        # Get price from first item
+        first_item = items_data[0]
+        if isinstance(first_item, dict):
+            price_data = first_item.get('price', {})
+            unit_amount = price_data.get('unit_amount', 0) if isinstance(price_data, dict) else (first_item.get('price', {}).get('unit_amount', 0) if hasattr(first_item.get('price', {}), 'unit_amount') else 0)
+        else:
+            # It's a Stripe object
+            price_obj = first_item.price if hasattr(first_item, 'price') else None
+            unit_amount = price_obj.unit_amount if price_obj and hasattr(price_obj, 'unit_amount') else 0
         
         # CRITICAL: ALWAYS cancel ALL existing active subscriptions before creating/updating new one
         # This ensures the new paid subscription is the only active one
@@ -208,13 +238,13 @@ def payment_success():
             subscription = Subscription(
                 user_id=current_user.id,
                 stripe_subscription_id=subscription_id,
-                stripe_customer_id=stripe_subscription.customer,
+                stripe_customer_id=stripe_subscription.customer if hasattr(stripe_subscription, 'customer') else None,
                 status='active',  # Set to active explicitly
                 plan_type=plan_type,  # Use plan_type from metadata
-                amount=stripe_subscription.items.data[0].price.unit_amount / 100,
-                currency=stripe_subscription.currency.upper(),
-                current_period_start=datetime.fromtimestamp(stripe_subscription.current_period_start),
-                current_period_end=datetime.fromtimestamp(stripe_subscription.current_period_end)
+                amount=unit_amount / 100,
+                currency=(stripe_subscription.currency.upper() if hasattr(stripe_subscription, 'currency') else 'USD'),
+                current_period_start=datetime.fromtimestamp(stripe_subscription.current_period_start) if hasattr(stripe_subscription, 'current_period_start') else datetime.utcnow(),
+                current_period_end=datetime.fromtimestamp(stripe_subscription.current_period_end) if hasattr(stripe_subscription, 'current_period_end') else datetime.utcnow() + timedelta(days=30)
             )
             db.session.add(subscription)
             print(f"Created new subscription: Plan={plan_type}, ID={subscription.id}")
@@ -222,11 +252,11 @@ def payment_success():
             # Update existing subscription
             subscription.status = 'active'  # Ensure it's active
             subscription.plan_type = plan_type  # Update plan type from metadata
-            subscription.stripe_customer_id = stripe_subscription.customer
-            subscription.amount = stripe_subscription.items.data[0].price.unit_amount / 100
-            subscription.currency = stripe_subscription.currency.upper()
-            subscription.current_period_start = datetime.fromtimestamp(stripe_subscription.current_period_start)
-            subscription.current_period_end = datetime.fromtimestamp(stripe_subscription.current_period_end)
+            subscription.stripe_customer_id = stripe_subscription.customer if hasattr(stripe_subscription, 'customer') else subscription.stripe_customer_id
+            subscription.amount = unit_amount / 100
+            subscription.currency = (stripe_subscription.currency.upper() if hasattr(stripe_subscription, 'currency') else subscription.currency)
+            subscription.current_period_start = datetime.fromtimestamp(stripe_subscription.current_period_start) if hasattr(stripe_subscription, 'current_period_start') else subscription.current_period_start
+            subscription.current_period_end = datetime.fromtimestamp(stripe_subscription.current_period_end) if hasattr(stripe_subscription, 'current_period_end') else subscription.current_period_end
             subscription.updated_at = datetime.utcnow()
             print(f"Updated existing subscription: Plan={plan_type}, ID={subscription.id}")
         
