@@ -73,9 +73,9 @@ def create_checkout_session():
         # Create or retrieve Stripe customer
         customer_id = None
         if current_user.subscriptions:
-            existing_sub = Subscription.query.filter_by(
-                user_id=current_user.id,
-                stripe_customer_id__isnot=None
+            existing_sub = Subscription.query.filter(
+                Subscription.user_id == current_user.id,
+                Subscription.stripe_customer_id.isnot(None)
             ).first()
             if existing_sub:
                 customer_id = existing_sub.stripe_customer_id

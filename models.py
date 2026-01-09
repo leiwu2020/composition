@@ -65,22 +65,19 @@ class User(UserMixin, db.Model):
     
     def get_active_subscription(self):
         """Get the active subscription if any"""
-        subscription = Subscription.query.filter_by(
-            user_id=self.id
+        # First try to get an active subscription
+        subscription = Subscription.query.filter(
+            Subscription.user_id == self.id,
+            Subscription.status == 'active'
         ).order_by(Subscription.created_at.desc()).first()
         
-        # If no subscription, return a free plan subscription object
+        # If no active subscription, try to get any subscription
         if not subscription:
-            # Create a virtual free subscription
-            from datetime import datetime, timedelta
-            subscription = Subscription(
-                user_id=self.id,
-                plan_type='free',
-                status='active',
-                amount=0,
-                current_period_start=datetime.utcnow(),
-                current_period_end=datetime.utcnow() + timedelta(days=365)
-            )
+            subscription = Subscription.query.filter_by(
+                user_id=self.id
+            ).order_by(Subscription.created_at.desc()).first()
+        
+        # If no subscription at all, return None (user will default to free plan)
         return subscription
     
     def has_active_subscription(self):
