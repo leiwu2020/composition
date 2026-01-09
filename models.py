@@ -75,8 +75,9 @@ class User(UserMixin, db.Model):
         now = datetime.utcnow()
         
         # Query for active subscriptions, ordered by most recent first
-        # IMPORTANT: Only get subscriptions with status='active' (exclude 'canceled')
-        subscription = Subscription.query.filter(
+        # CRITICAL: Only get subscriptions with status='active' (exclude 'canceled')
+        # Use a fresh query to bypass any cache
+        subscription = db.session.query(Subscription).filter(
             Subscription.user_id == self.id,
             Subscription.status == 'active'  # CRITICAL: Only active subscriptions
         ).filter(
@@ -88,12 +89,13 @@ class User(UserMixin, db.Model):
         if subscription:
             print(f"get_active_subscription() found: ID={subscription.id}, Plan={subscription.plan_type}, Status={subscription.status}, Updated={subscription.updated_at}")
         else:
-            # If no active subscription, try to get any subscription (for free plan users)
-            subscription = Subscription.query.filter_by(
-                user_id=self.id
-            ).order_by(Subscription.updated_at.desc(), Subscription.created_at.desc()).first()
-            if subscription:
-                print(f"get_active_subscription() found (non-active): ID={subscription.id}, Plan={subscription.plan_type}, Status={subscription.status}")
+            # If no active subscription, check if there are any subscriptions at all
+            all_subs = db.session.query(Subscription).filter_by(user_id=self.id).all()
+            print(f"get_active_subscription() - No active subscription found. Total subscriptions: {len(all_subs)}")
+            for sub in all_subs:
+                print(f"  - ID: {sub.id}, Plan: {sub.plan_type}, Status: {sub.status}")
+            # Return None - user will default to free plan
+            subscription = None
         
         # If no subscription at all, return None (user will default to free plan)
         return subscription
