@@ -450,26 +450,52 @@ def payment_cancel():
 @login_required
 def dashboard():
     """User subscription dashboard"""
-    # Refresh user object to get latest subscription data
-    db.session.refresh(current_user)
-    
-    # Expire relationship cache to force fresh query
+    # Force complete refresh - expire all caches
     from sqlalchemy.orm import object_session
     session = object_session(current_user)
     if session:
-        session.expire(current_user, ['subscriptions'])
+        # Expire all cached data
+        session.expire_all()
     
-    subscription = current_user.get_active_subscription()
-    plan_type = current_user.get_plan()
+    # Get completely fresh user from database (bypassing cache)
+    fresh_user = db.session.query(User).filter_by(id=current_user.id).first()
+    
+    # Force expire again to ensure fresh query
+    if session:
+        session.expire(fresh_user)
+        session.expire_all()
+    
+    # Debug: Check all subscriptions first
+    all_subs = db.session.query(Subscription).filter_by(user_id=fresh_user.id).all()
+    print(f"Dashboard - User: {fresh_user.username} (ID: {fresh_user.id})")
+    print(f"  All subscriptions in DB: {len(all_subs)}")
+    for sub in all_subs:
+        print(f"    - ID: {sub.id}, Plan: {sub.plan_type}, Status: {sub.status}, Updated: {sub.updated_at}, User ID: {sub.user_id}")
+    
+    active_subs = db.session.query(Subscription).filter(
+        Subscription.user_id == fresh_user.id,
+        Subscription.status == 'active'
+    ).all()
+    print(f"  Active subscriptions: {len(active_subs)}")
+    for sub in active_subs:
+        print(f"    - ID: {sub.id}, Plan: {sub.plan_type}, Status: {sub.status}")
+    
+    # Now get the subscription and plan - this should query fresh from DB
+    subscription = fresh_user.get_active_subscription()
+    plan_type = fresh_user.get_plan()
     plan = PLANS.get(plan_type, PLANS['free'])
-    remaining_queries = current_user.get_remaining_queries()
+    remaining_queries = fresh_user.get_remaining_queries()
     
-    # Debug logging
-    print(f"Dashboard - User: {current_user.username}, Plan: {plan_type}, Subscription: {subscription.plan_type if subscription else 'None'}")
+    # Debug: verify what we got
+    print(f"  Current plan (get_plan): {plan_type}")
+    if subscription:
+        print(f"  get_active_subscription() returned: ID={subscription.id}, Plan={subscription.plan_type}, Status={subscription.status}")
+    else:
+        print(f"  get_active_subscription() returned: None")
     
     return render_template('dashboard.html', 
                          subscription=subscription,
-                         user=current_user,
+                         user=fresh_user,
                          plan=plan,
                          plan_type=plan_type,
                          remaining_queries=remaining_queries,
