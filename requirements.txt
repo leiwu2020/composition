@@ -4,4 +4,5 @@ pypinyin==0.55.0
 python-docx==1.2.0
 reportlab==4.4.7
 flask-cors==6.0.2
+gunicorn==21.2.0
 
