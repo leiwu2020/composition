@@ -229,7 +229,8 @@ def payment_success():
             print(f"Cancelled old subscription: Plan={old_sub.plan_type}, ID={old_sub.id}, Stripe ID={old_sub.stripe_subscription_id}")
         
         # Create or update subscription in database
-        subscription = Subscription.query.filter_by(
+        # Use fresh query to bypass cache
+        subscription = db.session.query(Subscription).filter_by(
             stripe_subscription_id=subscription_id
         ).first()
         
@@ -247,7 +248,7 @@ def payment_success():
                 current_period_end=datetime.fromtimestamp(stripe_subscription.current_period_end) if hasattr(stripe_subscription, 'current_period_end') else datetime.utcnow() + timedelta(days=30)
             )
             db.session.add(subscription)
-            print(f"Created new subscription: Plan={plan_type}, ID={subscription.id}")
+            print(f"Payment success - Created NEW subscription: Plan={plan_type}, User={current_user.username}, User ID={current_user.id}")
         else:
             # Update existing subscription
             subscription.status = 'active'  # Ensure it's active
@@ -258,11 +259,15 @@ def payment_success():
             subscription.current_period_start = datetime.fromtimestamp(stripe_subscription.current_period_start) if hasattr(stripe_subscription, 'current_period_start') else subscription.current_period_start
             subscription.current_period_end = datetime.fromtimestamp(stripe_subscription.current_period_end) if hasattr(stripe_subscription, 'current_period_end') else subscription.current_period_end
             subscription.updated_at = datetime.utcnow()
-            print(f"Updated existing subscription: Plan={plan_type}, ID={subscription.id}")
+            print(f"Payment success - Updated EXISTING subscription: Plan={plan_type}, ID={subscription.id}, User={current_user.username}")
         
         # Commit the new/updated subscription
         db.session.commit()
-        print(f"Committed new subscription: ID={subscription.id}, Plan={subscription.plan_type}, Status={subscription.status}")
+        print(f"Payment success - Committed subscription: ID={subscription.id}, Plan={subscription.plan_type}, Status={subscription.status}, User ID={subscription.user_id}")
+        
+        # Verify it was saved correctly
+        verify_sub = db.session.query(Subscription).filter_by(id=subscription.id).first()
+        print(f"Payment success - Verification query: ID={verify_sub.id}, Plan={verify_sub.plan_type}, Status={verify_sub.status}, User ID={verify_sub.user_id}")
         
         # CRITICAL: Force a complete refresh of all data
         # First, expire all cached relationships
@@ -279,8 +284,17 @@ def payment_success():
         
         # Verify all subscriptions for this user
         all_subs = db.session.query(Subscription).filter_by(user_id=current_user.id).all()
-        print(f"All subscriptions for user after payment:")
+        print(f"Payment success - All subscriptions for user after payment ({len(all_subs)}):")
         for sub in all_subs:
+            print(f"  - ID: {sub.id}, Plan: {sub.plan_type}, Status: {sub.status}, Updated: {sub.updated_at}, User ID: {sub.user_id}")
+        
+        # Get active subscriptions directly
+        all_active = db.session.query(Subscription).filter(
+            Subscription.user_id == current_user.id,
+            Subscription.status == 'active'
+        ).order_by(Subscription.updated_at.desc()).all()
+        print(f"Payment success - Active subscriptions query: {len(all_active)} found")
+        for sub in all_active:
             print(f"  - ID: {sub.id}, Plan: {sub.plan_type}, Status: {sub.status}, Updated: {sub.updated_at}")
         
         # Get completely fresh user data from database (bypassing all caches)
@@ -294,30 +308,46 @@ def payment_success():
         # Now get the plan - this should query fresh from DB
         new_plan = fresh_user.get_plan()
         plan_name = PLANS.get(plan_type, {}).get('name', plan_type)
-        print(f"Payment success - User: {fresh_user.username}, Plan updated to: {new_plan} (expected: {plan_type})")
+        print(f"Payment success - User: {fresh_user.username}, Plan from get_plan(): {new_plan} (expected: {plan_type})")
         
         if new_plan != plan_type:
-            print(f"ERROR: Plan mismatch! Expected {plan_type}, got {new_plan}")
+            print(f"Payment success - ERROR: Plan mismatch! Expected {plan_type}, got {new_plan}")
             # Query directly to see what's happening
-            all_active = db.session.query(Subscription).filter(
-                Subscription.user_id == fresh_user.id,
-                Subscription.status == 'active'
-            ).order_by(Subscription.updated_at.desc()).all()
-            print(f"All active subscriptions for user: {[(s.id, s.plan_type, s.status, s.updated_at) for s in all_active]}")
+            print(f"Payment success - Direct active subscription query returned {len(all_active)} subscriptions")
             
             # If there's a mismatch, there might be multiple active subscriptions
             # Cancel all except the newest one
             if len(all_active) > 1:
-                print(f"WARNING: Multiple active subscriptions found! Canceling all except the newest")
+                print(f"Payment success - WARNING: Multiple active subscriptions found! Canceling all except the newest")
                 for sub in all_active[1:]:  # Skip the first (newest) one
                     sub.status = 'canceled'
                     sub.updated_at = datetime.utcnow()
                 db.session.commit()
                 # Re-query plan
-                session_obj.expire_all()
+                if session_obj:
+                    session_obj.expire_all()
                 fresh_user = db.session.query(User).filter_by(id=current_user.id).first()
                 new_plan = fresh_user.get_plan()
-                print(f"After canceling duplicates, plan is now: {new_plan}")
+                print(f"Payment success - After canceling duplicates, plan is now: {new_plan}")
+            elif len(all_active) == 0:
+                print(f"Payment success - ERROR: No active subscriptions found! This should not happen.")
+                # Force create the subscription again if it doesn't exist
+                if not subscription:
+                    print(f"Payment success - Attempting to recreate subscription...")
+                    subscription = Subscription(
+                        user_id=current_user.id,
+                        stripe_subscription_id=subscription_id,
+                        stripe_customer_id=stripe_subscription.customer if hasattr(stripe_subscription, 'customer') else None,
+                        status='active',
+                        plan_type=plan_type,
+                        amount=unit_amount / 100,
+                        currency=(stripe_subscription.currency.upper() if hasattr(stripe_subscription, 'currency') else 'USD'),
+                        current_period_start=datetime.fromtimestamp(stripe_subscription.current_period_start) if hasattr(stripe_subscription, 'current_period_start') else datetime.utcnow(),
+                        current_period_end=datetime.fromtimestamp(stripe_subscription.current_period_end) if hasattr(stripe_subscription, 'current_period_end') else datetime.utcnow() + timedelta(days=30)
+                    )
+                    db.session.add(subscription)
+                    db.session.commit()
+                    print(f"Payment success - Recreated subscription: ID={subscription.id}, Plan={subscription.plan_type}")
         
         flash(f'Subscription activated successfully! Your plan has been updated to {plan_name}.', 'success')
         return redirect(url_for('payments.dashboard'))
