@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Article Generator</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .form-section {
+            background: #f8f9fa;
+            padding: 30px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+            font-size: 1em;
+        }
+
+        input[type="text"],
+        input[type="number"],
+        select {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus,
+        input[type="number"]:focus,
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .article-section {
+            margin-top: 30px;
+        }
+
+        .article-editor {
+            width: 100%;
+            min-height: 400px;
+            padding: 20px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            font-family: 'Georgia', serif;
+            line-height: 1.8;
+            resize: vertical;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .article-editor:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        /* Pinyin styling - Pinyin on line above, characters stay inline */
+        .pinyin-wrapper {
+            display: inline-block;
+            position: relative;
+            vertical-align: baseline;
+            text-align: center;
+            margin: 0 1px;
+            padding-top: 1.2em;
+        }
+
+        .pinyin-line {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 0.65em;
+            color: #666;
+            line-height: 1;
+            white-space: nowrap;
+            font-family: 'Arial', sans-serif;
+            width: 100%;
+            text-align: center;
+            pointer-events: none;
+        }
+
+        .char-inline {
+            display: inline-block;
+            font-size: 1em;
+            line-height: 1.8;
+            vertical-align: baseline;
+        }
+
+        .download-section {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn-download {
+            background: #28a745;
+            padding: 12px 25px;
+            font-size: 0.95em;
+            flex: 1;
+            min-width: 120px;
+        }
+
+        .btn-download:hover {
+            background: #218838;
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.4);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #667eea;
+            font-size: 1.1em;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            border: 1px solid #f5c6cb;
+        }
+
+        .success {
+            background: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            border: 1px solid #c3e6cb;
+        }
+
+        .info-text {
+            font-size: 0.9em;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        /* Placeholder for contenteditable div */
+        [contenteditable][placeholder]:empty:before {
+            content: attr(placeholder);
+            color: #999;
+            cursor: text;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📝 AI Article Generator</h1>
+            <p>Create professional articles with AI assistance</p>
+        </div>
+
+        <div class="content">
+            <div class="form-section">
+                <div class="form-group">
+                    <label for="topic">Article Topic *</label>
+                    <input type="text" id="topic" placeholder="e.g., Climate Change, Artificial Intelligence, History of China..." required>
+                </div>
+
+                <div class="form-group">
+                    <label for="language">Language *</label>
+                    <select id="language" required onchange="toggleGradeSelector()">
+                        <option value="English">English</option>
+                        <option value="Chinese">Chinese (中文)</option>
+                        <option value="Spanish">Spanish (Español)</option>
+                        <option value="French">French (Français)</option>
+                        <option value="German">German (Deutsch)</option>
+                        <option value="Japanese">Japanese (日本語)</option>
+                        <option value="Korean">Korean (한국어)</option>
+                    </select>
+                    <div class="info-text">Note: Chinese articles will include Pinyin for difficult characters</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="language_level">Language Level *</label>
+                    <select id="language_level" required>
+                        <option value="beginner">Beginner</option>
+                        <option value="intermediate" selected>Intermediate</option>
+                        <option value="advanced">Advanced</option>
+                        <option value="professional">Professional</option>
+                    </select>
+                    <div class="info-text">Select the vocabulary and complexity level for the article</div>
+                </div>
+
+                <div class="form-group" id="gradeGroup" style="display: none;">
+                    <label for="grade">Grade Level *</label>
+                    <select id="grade" required>
+                        <option value="1">Grade 1</option>
+                        <option value="2">Grade 2</option>
+                        <option value="3">Grade 3</option>
+                        <option value="4">Grade 4</option>
+                        <option value="5">Grade 5</option>
+                        <option value="6">Grade 6</option>
+                        <option value="7">Grade 7</option>
+                        <option value="8">Grade 8</option>
+                        <option value="9">Grade 9</option>
+                        <option value="10">Grade 10</option>
+                        <option value="11">Grade 11</option>
+                        <option value="12">Grade 12</option>
+                        <option value="university">University/Adult</option>
+                    </select>
+                    <div class="info-text">Select the grade level to determine which Chinese characters need Pinyin</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="total_words">Total Words *</label>
+                    <input type="number" id="total_words" min="100" max="5000" value="500" required>
+                    <div class="info-text">Recommended: 300-1000 words for best results</div>
+                </div>
+
+                <button class="btn" id="generateBtn" onclick="generateArticle()">
+                    ✨ Generate Article
+                </button>
+            </div>
+
+            <div id="loading" class="loading" style="display: none;">
+                <div class="spinner"></div>
+                <p>Generating your article... This may take a moment.</p>
+            </div>
+
+            <div id="error" class="error" style="display: none;"></div>
+            <div id="success" class="success" style="display: none;"></div>
+
+            <div class="article-section" id="articleSection" style="display: none;">
+                <h2 style="margin-bottom: 15px; color: #333;">Your Article</h2>
+                <div class="article-editor" id="articleEditor" contenteditable="true" placeholder="Your generated article will appear here. You can edit it directly."></div>
+                
+                <div class="download-section">
+                    <button class="btn btn-download" onclick="downloadArticle('txt')">
+                        📄 Download as TXT
+                    </button>
+                    <button class="btn btn-download" onclick="downloadArticle('doc')">
+                        📝 Download as DOC
+                    </button>
+                    <button class="btn btn-download" onclick="downloadArticle('pdf')">
+                        📑 Download as PDF
+                    </button>
+                    <button class="btn btn-download" onclick="downloadArticle('html')">
+                        🌐 Download as HTML
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function toggleGradeSelector() {
+            const language = document.getElementById('language').value;
+            const gradeGroup = document.getElementById('gradeGroup');
+            const gradeSelect = document.getElementById('grade');
+            
+            if (language === 'Chinese') {
+                gradeGroup.style.display = 'block';
+                gradeSelect.required = true;
+            } else {
+                gradeGroup.style.display = 'none';
+                gradeSelect.required = false;
+            }
+        }
+
+        async function generateArticle() {
+            const topic = document.getElementById('topic').value.trim();
+            const language = document.getElementById('language').value;
+            const languageLevel = document.getElementById('language_level').value;
+            const totalWords = parseInt(document.getElementById('total_words').value);
+            const gradeSelect = document.getElementById('grade');
+            const grade = gradeSelect ? gradeSelect.value : 1;
+            const generateBtn = document.getElementById('generateBtn');
+            const loading = document.getElementById('loading');
+            const errorDiv = document.getElementById('error');
+            const successDiv = document.getElementById('success');
+            const articleSection = document.getElementById('articleSection');
+
+            // Validation
+            if (!topic) {
+                errorDiv.textContent = 'Please enter a topic';
+                errorDiv.style.display = 'block';
+                successDiv.style.display = 'none';
+                return;
+            }
+
+            if (totalWords < 100 || totalWords > 5000) {
+                errorDiv.textContent = 'Total words must be between 100 and 5000';
+                errorDiv.style.display = 'block';
+                successDiv.style.display = 'none';
+                return;
+            }
+
+            // Show loading, hide other elements
+            loading.style.display = 'block';
+            errorDiv.style.display = 'none';
+            successDiv.style.display = 'none';
+            articleSection.style.display = 'none';
+            generateBtn.disabled = true;
+
+            try {
+                const requestBody = {
+                    topic: topic,
+                    language: language,
+                    language_level: languageLevel,
+                    total_words: totalWords
+                };
+                
+                // Add grade only if Chinese is selected
+                if (language === 'Chinese' && gradeSelect) {
+                    requestBody.grade = gradeSelect.value === 'university' ? 'university' : parseInt(gradeSelect.value);
+                }
+
+                const response = await fetch('/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    const editor = document.getElementById('articleEditor');
+                    // Check if article contains HTML (for Chinese with Pinyin)
+                    if (data.article.includes('<span class="pinyin-wrapper">') || data.article.includes('<span class="pinyin-char">')) {
+                        editor.innerHTML = data.article.replace(/\n/g, '<br>');
+                    } else {
+                        editor.textContent = data.article;
+                    }
+                    articleSection.style.display = 'block';
+                    successDiv.textContent = 'Article generated successfully! You can now edit and download it.';
+                    successDiv.style.display = 'block';
+                    errorDiv.style.display = 'none';
+                } else {
+                    errorDiv.textContent = data.error || 'Failed to generate article';
+                    errorDiv.style.display = 'block';
+                    successDiv.style.display = 'none';
+                }
+            } catch (error) {
+                errorDiv.textContent = 'Error: ' + error.message;
+                errorDiv.style.display = 'block';
+                successDiv.style.display = 'none';
+            } finally {
+                loading.style.display = 'none';
+                generateBtn.disabled = false;
+            }
+        }
+
+        async function downloadArticle(format) {
+            const editor = document.getElementById('articleEditor');
+            // Get content - innerHTML for HTML content, textContent for plain text
+            const article = editor.innerHTML.trim() || editor.textContent.trim();
+            const topic = document.getElementById('topic').value.trim() || 'article';
+
+            if (!article) {
+                alert('No article content to download');
+                return;
+            }
+
+            try {
+                const response = await fetch('/download', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        article: article,
+                        format: format,
+                        filename: topic.replace(/[^a-z0-9]/gi, '_').toLowerCase()
+                    })
+                });
+
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    
+                    const extension = format === 'doc' ? 'docx' : format;
+                    a.download = `${topic.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.${extension}`;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                } else {
+                    const data = await response.json();
+                    alert('Download failed: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Error downloading file: ' + error.message);
+            }
+        }
+
+        // Allow Enter key to generate article
+        document.getElementById('topic').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                generateArticle();
+            }
+        });
+
+        document.getElementById('total_words').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                generateArticle();
+            }
+        });
+
+        // Initialize grade selector visibility on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            toggleGradeSelector();
+        });
+    </script>
+</body>
+</html>
+
