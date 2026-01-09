@@ -38,14 +38,46 @@ def pricing():
     # Get user's current plan if logged in
     current_plan_type = 'free'
     if current_user.is_authenticated:
-        # Refresh user to get latest subscription data
-        db.session.refresh(current_user)
+        # Force complete refresh - expire all caches
         from sqlalchemy.orm import object_session
         session = object_session(current_user)
         if session:
-            session.expire(current_user, ['subscriptions'])
-        current_plan_type = current_user.get_plan()
-        print(f"Pricing page - User: {current_user.username}, Current plan: {current_plan_type}")
+            # Expire all cached data
+            session.expire_all()
+        
+        # Get completely fresh user from database (bypassing cache)
+        fresh_user = db.session.query(User).filter_by(id=current_user.id).first()
+        
+        # Force expire again to ensure fresh query
+        if session:
+            session.expire(fresh_user)
+            session.expire_all()
+        
+        # Debug: Check all subscriptions first
+        all_subs = db.session.query(Subscription).filter_by(user_id=fresh_user.id).all()
+        print(f"Pricing page - User: {fresh_user.username} (ID: {fresh_user.id})")
+        print(f"  All subscriptions in DB: {len(all_subs)}")
+        for sub in all_subs:
+            print(f"    - ID: {sub.id}, Plan: {sub.plan_type}, Status: {sub.status}, Updated: {sub.updated_at}, User ID: {sub.user_id}")
+        
+        active_subs = db.session.query(Subscription).filter(
+            Subscription.user_id == fresh_user.id,
+            Subscription.status == 'active'
+        ).all()
+        print(f"  Active subscriptions: {len(active_subs)}")
+        for sub in active_subs:
+            print(f"    - ID: {sub.id}, Plan: {sub.plan_type}, Status: {sub.status}")
+        
+        # Now get the plan - this should query fresh from DB
+        current_plan_type = fresh_user.get_plan()
+        
+        # Debug: verify what we got
+        active_sub = fresh_user.get_active_subscription()
+        print(f"  Current plan (get_plan): {current_plan_type}")
+        if active_sub:
+            print(f"  get_active_subscription() returned: ID={active_sub.id}, Plan={active_sub.plan_type}, Status={active_sub.status}")
+        else:
+            print(f"  get_active_subscription() returned: None")
     
     return render_template('pricing.html', 
                          stripe_publishable_key=STRIPE_PUBLISHABLE_KEY,
