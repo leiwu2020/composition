@@ -320,9 +320,40 @@ def payment_success():
         db.session.commit()
         print(f"Payment success - Committed subscription: ID={subscription.id}, Plan={subscription.plan_type}, Status={subscription.status}, User ID={subscription.user_id}")
         
-        # Verify it was saved correctly
+        # CRITICAL: Verify it was saved correctly by querying with a completely fresh session
+        # Close the current session and start a new one to ensure we're reading from disk
+        db.session.close()
+        db.session.begin()
+        
+        # Now verify with a completely fresh query
         verify_sub = db.session.query(Subscription).filter_by(id=subscription.id).first()
-        print(f"Payment success - Verification query: ID={verify_sub.id}, Plan={verify_sub.plan_type}, Status={verify_sub.status}, User ID={verify_sub.user_id}")
+        if verify_sub:
+            print(f"Payment success - Verification query (fresh session): ID={verify_sub.id}, Plan={verify_sub.plan_type}, Status={verify_sub.status}, User ID={verify_sub.user_id}")
+            # Double-check the status is active
+            if verify_sub.status != 'active':
+                print(f"Payment success - CRITICAL: Subscription status is '{verify_sub.status}', fixing to 'active'")
+                verify_sub.status = 'active'
+                verify_sub.updated_at = datetime.utcnow()
+                db.session.commit()
+                print(f"Payment success - Fixed subscription status to 'active'")
+        else:
+            print(f"Payment success - CRITICAL ERROR: Subscription {subscription.id} not found after commit! Recreating...")
+            # Recreate the subscription
+            new_sub = Subscription(
+                user_id=current_user.id,
+                stripe_subscription_id=subscription_id,
+                stripe_customer_id=stripe_subscription.customer if hasattr(stripe_subscription, 'customer') else None,
+                status='active',
+                plan_type=plan_type,
+                amount=unit_amount / 100,
+                currency=(stripe_subscription.currency.upper() if hasattr(stripe_subscription, 'currency') else 'USD'),
+                current_period_start=datetime.fromtimestamp(stripe_subscription.current_period_start) if hasattr(stripe_subscription, 'current_period_start') else datetime.utcnow(),
+                current_period_end=datetime.fromtimestamp(stripe_subscription.current_period_end) if hasattr(stripe_subscription, 'current_period_end') else datetime.utcnow() + timedelta(days=30)
+            )
+            db.session.add(new_sub)
+            db.session.commit()
+            subscription = new_sub
+            print(f"Payment success - Recreated subscription: ID={subscription.id}, Plan={subscription.plan_type}, Status={subscription.status}")
         
         # CRITICAL: Force a complete refresh of all data
         # First, expire all cached relationships
@@ -431,6 +462,52 @@ def payment_success():
                     fresh_user = db.session.query(User).filter_by(id=current_user.id).first()
                     new_plan = fresh_user.get_plan()
                     print(f"Payment success - After recreating, plan is now: {new_plan}")
+        
+        # Final verification before redirect
+        # Force one more complete refresh to ensure everything is saved
+        db.session.commit()
+        if session_obj:
+            session_obj.expire_all()
+        
+        # Get one final fresh user to verify
+        final_user = db.session.query(User).filter_by(id=current_user.id).first()
+        final_plan = final_user.get_plan()
+        print(f"Payment success - FINAL VERIFICATION: User={final_user.username}, Plan={final_plan} (expected: {plan_type})")
+        
+        if final_plan != plan_type:
+            print(f"Payment success - WARNING: Final plan check shows {final_plan}, expected {plan_type}")
+            # Force one more query
+            final_active = db.session.query(Subscription).filter(
+                Subscription.user_id == final_user.id,
+                Subscription.status == 'active'
+            ).order_by(Subscription.updated_at.desc()).first()
+            if final_active:
+                print(f"Payment success - Active subscription found: ID={final_active.id}, Plan={final_active.plan_type}, Status={final_active.status}")
+            else:
+                print(f"Payment success - ERROR: No active subscription found in final check!")
+        
+        # Final verification before redirect
+        # Force one more complete refresh to ensure everything is saved
+        db.session.commit()
+        if session_obj:
+            session_obj.expire_all()
+        
+        # Get one final fresh user to verify
+        final_user = db.session.query(User).filter_by(id=current_user.id).first()
+        final_plan = final_user.get_plan()
+        print(f"Payment success - FINAL VERIFICATION: User={final_user.username}, Plan={final_plan} (expected: {plan_type})")
+        
+        if final_plan != plan_type:
+            print(f"Payment success - WARNING: Final plan check shows {final_plan}, expected {plan_type}")
+            # Force one more query
+            final_active = db.session.query(Subscription).filter(
+                Subscription.user_id == final_user.id,
+                Subscription.status == 'active'
+            ).order_by(Subscription.updated_at.desc()).first()
+            if final_active:
+                print(f"Payment success - Active subscription found: ID={final_active.id}, Plan={final_active.plan_type}, Status={final_active.status}")
+            else:
+                print(f"Payment success - ERROR: No active subscription found in final check!")
         
         flash(f'Subscription activated successfully! Your plan has been updated to {plan_name}.', 'success')
         return redirect(url_for('payments.dashboard'))
