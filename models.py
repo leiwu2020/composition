@@ -96,15 +96,29 @@ class User(UserMixin, db.Model):
     
     def get_plan(self):
         """Get the user's current plan"""
-        # Expire the relationship cache to get fresh data
+        # Force complete cache expiration
         from sqlalchemy.orm import object_session
         session = object_session(self)
         if session:
-            session.expire(self, ['subscriptions'])
+            # Expire all cached relationships and attributes
+            session.expire(self)
+            session.expire_all()
         
+        # Get fresh subscription from database
         subscription = self.get_active_subscription()
-        if subscription and subscription.is_active():
-            return subscription.plan_type
+        
+        # Double-check: if subscription exists, verify it's actually active
+        if subscription:
+            # Refresh the subscription object to ensure we have latest data
+            if session:
+                session.refresh(subscription)
+            
+            # Check if it's actually active
+            if subscription.is_active():
+                return subscription.plan_type
+            else:
+                print(f"Subscription {subscription.id} exists but is not active: status={subscription.status}")
+        
         return 'free'
     
     def can_make_query(self):

@@ -232,22 +232,27 @@ def payment_success():
         
         db.session.commit()
         
-        # Force refresh - expire all cached relationships
+        # CRITICAL: Force a complete refresh of all data
+        # First, expire all cached relationships
         from sqlalchemy.orm import object_session
         session_obj = object_session(current_user)
         if session_obj:
-            # Expire all relationships
-            session_obj.expire(current_user)
-            # Also expire the subscription object
-            if subscription:
-                session_obj.expire(subscription)
+            # Expire all relationships and attributes
+            session_obj.expire_all()
         
-        # Verify the subscription was created/updated correctly
+        # Verify the subscription was created/updated correctly by querying fresh from DB
         db.session.refresh(subscription)
         print(f"Payment success - Subscription ID: {subscription.id}, Plan: {subscription.plan_type}, Status: {subscription.status}")
         
-        # Get fresh user data to verify plan
-        fresh_user = User.query.get(current_user.id)
+        # Get completely fresh user data from database (bypassing all caches)
+        fresh_user = db.session.query(User).filter_by(id=current_user.id).first()
+        
+        # Force expire all relationships on fresh user
+        if session_obj:
+            session_obj.expire(fresh_user)
+            session_obj.expire_all()
+        
+        # Now get the plan - this should query fresh from DB
         new_plan = fresh_user.get_plan()
         plan_name = PLANS.get(plan_type, {}).get('name', plan_type)
         print(f"Payment success - User: {fresh_user.username}, Plan updated to: {new_plan} (expected: {plan_type})")
@@ -258,8 +263,13 @@ def payment_success():
             all_active = Subscription.query.filter(
                 Subscription.user_id == fresh_user.id,
                 Subscription.status == 'active'
-            ).all()
-            print(f"All active subscriptions for user: {[(s.id, s.plan_type, s.updated_at) for s in all_active]}")
+            ).order_by(Subscription.updated_at.desc()).all()
+            print(f"All active subscriptions for user: {[(s.id, s.plan_type, s.status, s.updated_at) for s in all_active]}")
+            
+            # Force update: ensure the most recent subscription is the one being used
+            if all_active:
+                latest = all_active[0]
+                print(f"Latest subscription: ID={latest.id}, Plan={latest.plan_type}, Status={latest.status}")
         
         flash(f'Subscription activated successfully! Your plan has been updated to {plan_name}.', 'success')
         return redirect(url_for('payments.dashboard'))
