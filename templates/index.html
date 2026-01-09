@@ -245,8 +245,21 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>📝 AI Article Generator</h1>
-            <p>Create professional articles with AI assistance</p>
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+                <div>
+                    <h1>📝 AI Article Generator</h1>
+                    <p>Create professional articles with AI assistance</p>
+                </div>
+                {% if user %}
+                <div style="text-align: right; color: white;">
+                    <p style="margin-bottom: 10px;">Welcome, <strong>{{ user.username }}</strong></p>
+                    <div>
+                        <a href="/payment/dashboard" style="color: white; margin-right: 15px; text-decoration: none;">Dashboard</a>
+                        <a href="/auth/logout" style="color: white; text-decoration: none;">Logout</a>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
         </div>
 
         <div class="content">

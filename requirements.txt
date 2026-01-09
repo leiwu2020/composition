@@ -5,4 +5,9 @@ python-docx==1.2.0
 reportlab==4.4.7
 flask-cors==6.0.2
 gunicorn==21.2.0
+flask-login==0.6.3
+flask-sqlalchemy==3.1.1
+flask-bcrypt==1.0.1
+stripe==10.7.0
+python-dotenv==1.0.0
 

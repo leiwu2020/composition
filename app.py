@@ -1,6 +1,7 @@
 import os
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, redirect, url_for, flash
 from flask_cors import CORS
+from flask_login import LoginManager, login_required, current_user
 from openai import OpenAI
 from pypinyin import lazy_pinyin, Style
 from docx import Document
@@ -12,9 +13,37 @@ from reportlab.pdfbase.ttfonts import TTFont
 from io import BytesIO
 import html
 import platform
+from dotenv import load_dotenv
+from models import db, User
+from auth import auth_bp
+from payments import payments_bp
+
+# Load environment variables
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
+
+# Configuration
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///composition.db')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Initialize extensions
+db.init_app(app)
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'auth.login'
+login_manager.login_message = 'Please log in to access this page.'
+login_manager.login_message_category = 'info'
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
+
+# Register blueprints
+app.register_blueprint(auth_bp, url_prefix='/auth')
+app.register_blueprint(payments_bp, url_prefix='/payment')
 
 # Initialize OpenAI client
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
@@ -177,10 +206,24 @@ def add_pinyin_to_chinese(text, grade=1):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    """Main page - requires authentication and active subscription"""
+    if not current_user.is_authenticated:
+        return redirect(url_for('auth.login'))
+    
+    if not current_user.has_active_subscription():
+        flash('Please subscribe to access the article generator', 'warning')
+        return redirect(url_for('payments.pricing'))
+    
+    return render_template('index.html', user=current_user)
 
 @app.route('/generate', methods=['POST'])
+@login_required
 def generate_article():
+    """Generate article - requires authentication and active subscription"""
+    # Check for active subscription
+    if not current_user.has_active_subscription():
+        return jsonify({'error': 'Active subscription required', 'success': False}), 403
+    
     try:
         data = request.json
         topic = data.get('topic', '')
@@ -412,7 +455,13 @@ def html_to_text(html_content):
     return text
 
 @app.route('/download', methods=['POST'])
+@login_required
 def download_article():
+    """Download article - requires authentication and active subscription"""
+    # Check for active subscription
+    if not current_user.has_active_subscription():
+        return jsonify({'error': 'Active subscription required', 'success': False}), 403
+    
     try:
         data = request.json
         article = data.get('article', '')
@@ -639,6 +688,10 @@ def download_article():
     
     except Exception as e:
         return jsonify({'error': str(e), 'success': False}), 500
+
+# Create database tables
+with app.app_context():
+    db.create_all()
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))

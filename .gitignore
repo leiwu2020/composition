@@ -42,3 +42,12 @@ htmlcov/
 *.temp
 /tmp/
 
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment files
+.env
+.env.local
+
