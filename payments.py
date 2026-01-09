@@ -161,27 +161,29 @@ def payment_success():
         plan_type = session.metadata.get('plan_type', 'basic')
         is_plan_change = session.metadata.get('is_plan_change', 'false') == 'true'
         
-        # If this is a plan change, cancel the old subscription first
-        if is_plan_change:
-            # Find all active subscriptions for this user (except the new one)
-            old_subscriptions = Subscription.query.filter(
-                Subscription.user_id == current_user.id,
-                Subscription.status == 'active',
-                Subscription.stripe_subscription_id != subscription_id
-            ).all()
-            
-            for old_sub in old_subscriptions:
-                if old_sub.stripe_subscription_id:
-                    try:
-                        stripe.Subscription.modify(
-                            old_sub.stripe_subscription_id,
-                            cancel_at_period_end=True
-                        )
-                    except Exception as e:
-                        print(f"Error canceling old subscription: {e}")
-                # Mark old subscription as canceled
-                old_sub.status = 'canceled'
-                old_sub.updated_at = datetime.utcnow()
+        # CRITICAL: ALWAYS cancel ALL existing active subscriptions before creating/updating new one
+        # This ensures the new paid subscription is the only active one
+        # (Otherwise, old free subscriptions will still be active and get picked up)
+        old_subscriptions = Subscription.query.filter(
+            Subscription.user_id == current_user.id,
+            Subscription.status == 'active',
+            Subscription.stripe_subscription_id != subscription_id
+        ).all()
+        
+        print(f"Found {len(old_subscriptions)} existing active subscriptions to cancel")
+        for old_sub in old_subscriptions:
+            if old_sub.stripe_subscription_id:
+                try:
+                    stripe.Subscription.modify(
+                        old_sub.stripe_subscription_id,
+                        cancel_at_period_end=True
+                    )
+                except Exception as e:
+                    print(f"Error canceling old subscription in Stripe: {e}")
+            # Mark old subscription as canceled
+            old_sub.status = 'canceled'
+            old_sub.updated_at = datetime.utcnow()
+            print(f"Cancelled old subscription: Plan={old_sub.plan_type}, ID={old_sub.id}, Stripe ID={old_sub.stripe_subscription_id}")
         
         # Create or update subscription in database
         subscription = Subscription.query.filter_by(
@@ -189,30 +191,20 @@ def payment_success():
         ).first()
         
         if not subscription:
-            # New subscription - check if user has any existing subscriptions first
-            # Cancel any existing active subscriptions
-            existing_subs = Subscription.query.filter(
-                Subscription.user_id == current_user.id,
-                Subscription.status == 'active'
-            ).all()
-            
-            for old_sub in existing_subs:
-                old_sub.status = 'canceled'
-                old_sub.updated_at = datetime.utcnow()
-            
-            # Create new subscription
+            # New subscription - create it
             subscription = Subscription(
                 user_id=current_user.id,
                 stripe_subscription_id=subscription_id,
                 stripe_customer_id=stripe_subscription.customer,
                 status='active',  # Set to active explicitly
-                plan_type=plan_type,  # Use plan_type from metadata, not from Stripe
+                plan_type=plan_type,  # Use plan_type from metadata
                 amount=stripe_subscription.items.data[0].price.unit_amount / 100,
                 currency=stripe_subscription.currency.upper(),
                 current_period_start=datetime.fromtimestamp(stripe_subscription.current_period_start),
                 current_period_end=datetime.fromtimestamp(stripe_subscription.current_period_end)
             )
             db.session.add(subscription)
+            print(f"Created new subscription: Plan={plan_type}, ID={subscription.id}")
         else:
             # Update existing subscription
             subscription.status = 'active'  # Ensure it's active
@@ -223,6 +215,7 @@ def payment_success():
             subscription.current_period_start = datetime.fromtimestamp(stripe_subscription.current_period_start)
             subscription.current_period_end = datetime.fromtimestamp(stripe_subscription.current_period_end)
             subscription.updated_at = datetime.utcnow()
+            print(f"Updated existing subscription: Plan={plan_type}, ID={subscription.id}")
         
         db.session.commit()
         
@@ -236,11 +229,11 @@ def payment_success():
             if subscription:
                 session_obj.expire(subscription)
         
-        # Verify the plan change by querying fresh from database
+        # Verify the subscription was created/updated correctly
         db.session.refresh(subscription)
         print(f"Payment success - Subscription ID: {subscription.id}, Plan: {subscription.plan_type}, Status: {subscription.status}")
         
-        # Get fresh user data
+        # Get fresh user data to verify plan
         fresh_user = User.query.get(current_user.id)
         new_plan = fresh_user.get_plan()
         plan_name = PLANS.get(plan_type, {}).get('name', plan_type)
@@ -248,14 +241,12 @@ def payment_success():
         
         if new_plan != plan_type:
             print(f"WARNING: Plan mismatch! Expected {plan_type}, got {new_plan}")
-            # Force update by querying directly
-            active_sub = Subscription.query.filter(
+            # Query directly to see what's happening
+            all_active = Subscription.query.filter(
                 Subscription.user_id == fresh_user.id,
-                Subscription.status == 'active',
-                Subscription.plan_type == plan_type
-            ).first()
-            if active_sub:
-                print(f"Found active subscription with plan {active_sub.plan_type}")
+                Subscription.status == 'active'
+            ).all()
+            print(f"All active subscriptions for user: {[(s.id, s.plan_type, s.updated_at) for s in all_active]}")
         
         flash(f'Subscription activated successfully! Your plan has been updated to {plan_name}.', 'success')
         return redirect(url_for('payments.dashboard'))
