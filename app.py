@@ -14,7 +14,7 @@ from io import BytesIO
 import html
 import platform
 from dotenv import load_dotenv
-from models import db, User
+from models import db, User, QueryLog, PLANS
 from auth import auth_bp
 from payments import payments_bp
 
@@ -206,23 +206,41 @@ def add_pinyin_to_chinese(text, grade=1):
 
 @app.route('/')
 def index():
-    """Main page - requires authentication and active subscription"""
+    """Main page - requires authentication"""
     if not current_user.is_authenticated:
         return redirect(url_for('auth.login'))
     
-    if not current_user.has_active_subscription():
-        flash('Please subscribe to access the article generator', 'warning')
-        return redirect(url_for('payments.pricing'))
+    # Get user's plan info
+    plan_type = current_user.get_plan()
+    plan = PLANS.get(plan_type, PLANS['free'])
+    remaining_queries = current_user.get_remaining_queries()
     
-    return render_template('index.html', user=current_user)
+    return render_template('index.html', 
+                         user=current_user,
+                         plan=plan,
+                         plan_type=plan_type,
+                         remaining_queries=remaining_queries)
 
 @app.route('/generate', methods=['POST'])
 @login_required
 def generate_article():
-    """Generate article - requires authentication and active subscription"""
-    # Check for active subscription
-    if not current_user.has_active_subscription():
-        return jsonify({'error': 'Active subscription required', 'success': False}), 403
+    """Generate article - requires authentication and checks query limits"""
+    # Check if user can make a query
+    if not current_user.can_make_query():
+        plan_type = current_user.get_plan()
+        plan = PLANS.get(plan_type, PLANS['free'])
+        if plan.get('queries_per_day'):
+            limit_msg = f"{plan['queries_per_day']} queries per day"
+        elif plan.get('queries_per_week'):
+            limit_msg = f"{plan['queries_per_week']} queries per week"
+        elif plan.get('queries_per_month'):
+            limit_msg = f"{plan['queries_per_month']} queries per month"
+        else:
+            limit_msg = "query limit"
+        return jsonify({
+            'error': f'Query limit reached. Your plan allows {limit_msg}. Please upgrade or wait for the next period.',
+            'success': False
+        }), 403
     
     try:
         data = request.json
@@ -316,9 +334,22 @@ Article:"""
         if language == 'Chinese':
             article = add_pinyin_to_chinese(article, grade=grade)
         
+        # Log the query
+        query_log = QueryLog(
+            user_id=current_user.id,
+            topic=topic,
+            language=language
+        )
+        db.session.add(query_log)
+        db.session.commit()
+        
+        # Get remaining queries for response
+        remaining = current_user.get_remaining_queries()
+        
         return jsonify({
             'article': article,
-            'success': True
+            'success': True,
+            'remaining_queries': remaining
         })
     
     except Exception as e:
@@ -457,10 +488,8 @@ def html_to_text(html_content):
 @app.route('/download', methods=['POST'])
 @login_required
 def download_article():
-    """Download article - requires authentication and active subscription"""
-    # Check for active subscription
-    if not current_user.has_active_subscription():
-        return jsonify({'error': 'Active subscription required', 'success': False}), 403
+    """Download article - requires authentication"""
+    # All authenticated users can download (free plan included)
     
     try:
         data = request.json

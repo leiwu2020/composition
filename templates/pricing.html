@@ -32,41 +32,78 @@
         }
 
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
+        }
+
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 30px;
+            margin-bottom: 40px;
         }
 
         .pricing-card {
             background: white;
             border-radius: 20px;
-            padding: 40px;
+            padding: 30px;
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            max-width: 500px;
-            margin: 0 auto;
             text-align: center;
+            transition: transform 0.3s, box-shadow 0.3s;
+            position: relative;
+        }
+
+        .pricing-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 25px 70px rgba(0, 0, 0, 0.4);
+        }
+
+        .pricing-card.featured {
+            border: 3px solid #667eea;
+            transform: scale(1.05);
+        }
+
+        .plan-badge {
+            position: absolute;
+            top: -15px;
+            right: 20px;
+            background: #667eea;
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            font-weight: 600;
         }
 
         .plan-name {
-            font-size: 2em;
+            font-size: 1.8em;
             color: #333;
             margin-bottom: 10px;
+            margin-top: 10px;
         }
 
         .plan-price {
-            font-size: 3em;
+            font-size: 2.5em;
             color: #667eea;
             margin: 20px 0;
         }
 
         .plan-price span {
-            font-size: 0.5em;
+            font-size: 0.4em;
             color: #666;
+        }
+
+        .plan-interval {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 20px;
         }
 
         .plan-features {
             list-style: none;
             margin: 30px 0;
             text-align: left;
+            min-height: 200px;
         }
 
         .plan-features li {
@@ -79,13 +116,17 @@
             margin-right: 10px;
         }
 
+        .plan-features li:last-child {
+            border-bottom: none;
+        }
+
         .btn-subscribe {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
             padding: 15px 40px;
             border-radius: 8px;
-            font-size: 1.2em;
+            font-size: 1.1em;
             font-weight: 600;
             cursor: pointer;
             transition: transform 0.2s, box-shadow 0.2s;
@@ -101,6 +142,10 @@
         .btn-subscribe:disabled {
             opacity: 0.6;
             cursor: not-allowed;
+        }
+
+        .btn-free {
+            background: #6c757d;
         }
 
         .nav-links {
@@ -139,6 +184,13 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        .query-limit {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #667eea;
+            margin: 10px 0;
+        }
     </style>
 </head>
 <body>
@@ -148,46 +200,81 @@
     </div>
 
     <div class="container">
-        <div class="pricing-card">
-            <h2 class="plan-name">Monthly Subscription</h2>
-            <div class="plan-price">
-                ${{ "%.2f"|format(monthly_amount) }}<span>/month</span>
+        <div class="pricing-grid">
+            {% for plan_key, plan_data in plans.items() %}
+            <div class="pricing-card {% if plan_key == 'elite' %}featured{% endif %}">
+                {% if plan_key == 'elite' %}
+                <div class="plan-badge">POPULAR</div>
+                {% endif %}
+                <h2 class="plan-name">{{ plan_data.name }}</h2>
+                <div class="plan-price">
+                    {% if plan_data.price == 0 %}
+                    FREE
+                    {% else %}
+                    ${{ "%.2f"|format(plan_data.price) }}
+                    {% endif %}
+                    {% if plan_data.price > 0 %}
+                    <span>/{{ plan_data.interval }}</span>
+                    {% endif %}
+                </div>
+                <div class="query-limit">
+                    {% if plan_data.queries_per_day %}
+                    {{ plan_data.queries_per_day }} queries/day
+                    {% elif plan_data.queries_per_week %}
+                    {{ plan_data.queries_per_week }} queries/week
+                    {% elif plan_data.queries_per_month %}
+                    {{ plan_data.queries_per_month }} queries/month
+                    {% endif %}
+                </div>
+                <ul class="plan-features">
+                    <li><i class="fas fa-check"></i> AI-powered article generation</li>
+                    <li><i class="fas fa-check"></i> All languages supported</li>
+                    <li><i class="fas fa-check"></i> Multiple download formats</li>
+                    <li><i class="fas fa-check"></i> Chinese Pinyin support</li>
+                    <li><i class="fas fa-check"></i> Language level selection</li>
+                    {% if plan_key != 'free' %}
+                    <li><i class="fas fa-check"></i> Priority support</li>
+                    <li><i class="fas fa-check"></i> Cancel anytime</li>
+                    {% endif %}
+                </ul>
+                
+                <button class="btn-subscribe {% if plan_key == 'free' %}btn-free{% endif %}" 
+                        onclick="subscribe('{{ plan_key }}')" 
+                        {% if plan_key == 'free' %}disabled{% endif %}>
+                    {% if plan_key == 'free' %}
+                    Current Plan
+                    {% else %}
+                    Subscribe Now
+                    {% endif %}
+                </button>
             </div>
-            <ul class="plan-features">
-                <li><i class="fas fa-check"></i> Unlimited article generation</li>
-                <li><i class="fas fa-check"></i> All languages supported</li>
-                <li><i class="fas fa-check"></i> Multiple download formats</li>
-                <li><i class="fas fa-check"></i> Chinese Pinyin support</li>
-                <li><i class="fas fa-check"></i> Language level selection</li>
-                <li><i class="fas fa-check"></i> Priority support</li>
-                <li><i class="fas fa-check"></i> Cancel anytime</li>
-            </ul>
-            
-            <div id="loading" class="loading">
-                <div class="spinner"></div>
-                <p>Redirecting to payment...</p>
-            </div>
-            
-            <button id="subscribeBtn" class="btn-subscribe" onclick="subscribe()">
-                Subscribe Now
-            </button>
+            {% endfor %}
         </div>
     </div>
 
     <div class="nav-links">
         <a href="/">Home</a>
         {% if current_user.is_authenticated %}
-            <a href="{{ url_for('payments.dashboard') }}">Dashboard</a>
-            <a href="{{ url_for('auth.logout') }}">Logout</a>
+            <a href="/payment/dashboard">Dashboard</a>
+            <a href="/auth/logout">Logout</a>
         {% else %}
-            <a href="{{ url_for('auth.login') }}">Login</a>
-            <a href="{{ url_for('auth.register') }}">Register</a>
+            <a href="/auth/login">Login</a>
+            <a href="/auth/register">Register</a>
         {% endif %}
     </div>
 
+    <div id="loading" class="loading">
+        <div class="spinner"></div>
+        <p>Redirecting to payment...</p>
+    </div>
+
     <script>
-        async function subscribe() {
-            const btn = document.getElementById('subscribeBtn');
+        async function subscribe(planType) {
+            if (planType === 'free') {
+                return;
+            }
+
+            const btn = event.target;
             const loading = document.getElementById('loading');
             
             btn.disabled = true;
@@ -200,14 +287,13 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        plan_type: 'monthly'
+                        plan_type: planType
                     })
                 });
 
                 const data = await response.json();
 
                 if (data.success) {
-                    // Redirect to Stripe Checkout
                     window.location.href = data.url;
                 } else {
                     alert('Error: ' + data.error);
@@ -223,4 +309,3 @@
     </script>
 </body>
 </html>
-

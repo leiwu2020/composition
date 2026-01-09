@@ -252,7 +252,10 @@
                 </div>
                 {% if user %}
                 <div style="text-align: right; color: white;">
-                    <p style="margin-bottom: 10px;">Welcome, <strong>{{ user.username }}</strong></p>
+                    <p style="margin-bottom: 5px;">Welcome, <strong>{{ user.username }}</strong></p>
+                    <p style="margin-bottom: 10px; font-size: 0.9em; opacity: 0.9;">
+                        Plan: {{ plan.name }} | Queries remaining: {{ remaining_queries }}
+                    </p>
                     <div>
                         <a href="/payment/dashboard" style="color: white; margin-right: 15px; text-decoration: none;">Dashboard</a>
                         <a href="/auth/logout" style="color: white; text-decoration: none;">Logout</a>

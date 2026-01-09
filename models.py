@@ -4,6 +4,50 @@ from datetime import datetime, timedelta
 
 db = SQLAlchemy()
 
+# Plan definitions
+PLANS = {
+    'free': {
+        'name': 'Free',
+        'price': 0,
+        'interval': 'month',
+        'queries_per_month': 3,
+        'queries_per_week': None,
+        'queries_per_day': None
+    },
+    'basic': {
+        'name': 'Basic',
+        'price': 4.99,
+        'interval': 'month',
+        'queries_per_month': None,
+        'queries_per_week': 3,
+        'queries_per_day': None
+    },
+    'elite': {
+        'name': 'Elite',
+        'price': 9.99,
+        'interval': 'month',
+        'queries_per_month': None,
+        'queries_per_week': None,
+        'queries_per_day': 10
+    },
+    'advanced': {
+        'name': 'Advanced',
+        'price': 19.99,
+        'interval': 'month',
+        'queries_per_month': 100,
+        'queries_per_week': None,
+        'queries_per_day': None
+    },
+    'annual': {
+        'name': 'Annual Pass',
+        'price': 199.99,
+        'interval': 'year',
+        'queries_per_month': 100,
+        'queries_per_week': None,
+        'queries_per_day': None
+    }
+}
+
 class User(UserMixin, db.Model):
     __tablename__ = 'users'
     
@@ -16,20 +60,109 @@ class User(UserMixin, db.Model):
     
     # Relationship to subscriptions
     subscriptions = db.relationship('Subscription', backref='user', lazy=True, cascade='all, delete-orphan')
+    # Relationship to query logs
+    query_logs = db.relationship('QueryLog', backref='user', lazy=True, cascade='all, delete-orphan')
     
     def get_active_subscription(self):
         """Get the active subscription if any"""
-        return Subscription.query.filter_by(
-            user_id=self.id,
-            status='active'
+        subscription = Subscription.query.filter_by(
+            user_id=self.id
         ).order_by(Subscription.created_at.desc()).first()
+        
+        # If no subscription, return a free plan subscription object
+        if not subscription:
+            # Create a virtual free subscription
+            from datetime import datetime, timedelta
+            subscription = Subscription(
+                user_id=self.id,
+                plan_type='free',
+                status='active',
+                amount=0,
+                current_period_start=datetime.utcnow(),
+                current_period_end=datetime.utcnow() + timedelta(days=365)
+            )
+        return subscription
     
     def has_active_subscription(self):
         """Check if user has an active subscription"""
         subscription = self.get_active_subscription()
         if subscription:
             return subscription.is_active()
-        return False
+        # Free plan users don't need active subscription
+        return True
+    
+    def get_plan(self):
+        """Get the user's current plan"""
+        subscription = self.get_active_subscription()
+        if subscription:
+            return subscription.plan_type
+        return 'free'
+    
+    def can_make_query(self):
+        """Check if user can make a query based on their plan limits"""
+        plan_type = self.get_plan()
+        plan = PLANS.get(plan_type, PLANS['free'])
+        
+        # Get query counts for different periods
+        now = datetime.utcnow()
+        
+        if plan['queries_per_day']:
+            # Check daily limit
+            today_start = datetime(now.year, now.month, now.day)
+            today_queries = QueryLog.query.filter_by(
+                user_id=self.id
+            ).filter(QueryLog.created_at >= today_start).count()
+            return today_queries < plan['queries_per_day']
+        
+        elif plan['queries_per_week']:
+            # Check weekly limit
+            week_start = now - timedelta(days=now.weekday())
+            week_start = datetime(week_start.year, week_start.month, week_start.day)
+            week_queries = QueryLog.query.filter_by(
+                user_id=self.id
+            ).filter(QueryLog.created_at >= week_start).count()
+            return week_queries < plan['queries_per_week']
+        
+        elif plan['queries_per_month']:
+            # Check monthly limit
+            month_start = datetime(now.year, now.month, 1)
+            month_queries = QueryLog.query.filter_by(
+                user_id=self.id
+            ).filter(QueryLog.created_at >= month_start).count()
+            return month_queries < plan['queries_per_month']
+        
+        return True
+    
+    def get_remaining_queries(self):
+        """Get remaining queries for current period"""
+        plan_type = self.get_plan()
+        plan = PLANS.get(plan_type, PLANS['free'])
+        
+        now = datetime.utcnow()
+        
+        if plan['queries_per_day']:
+            today_start = datetime(now.year, now.month, now.day)
+            used = QueryLog.query.filter_by(
+                user_id=self.id
+            ).filter(QueryLog.created_at >= today_start).count()
+            return max(0, plan['queries_per_day'] - used)
+        
+        elif plan['queries_per_week']:
+            week_start = now - timedelta(days=now.weekday())
+            week_start = datetime(week_start.year, week_start.month, week_start.day)
+            used = QueryLog.query.filter_by(
+                user_id=self.id
+            ).filter(QueryLog.created_at >= week_start).count()
+            return max(0, plan['queries_per_week'] - used)
+        
+        elif plan['queries_per_month']:
+            month_start = datetime(now.year, now.month, 1)
+            used = QueryLog.query.filter_by(
+                user_id=self.id
+            ).filter(QueryLog.created_at >= month_start).count()
+            return max(0, plan['queries_per_month'] - used)
+        
+        return 0
 
 class Subscription(db.Model):
     __tablename__ = 'subscriptions'
@@ -39,8 +172,8 @@ class Subscription(db.Model):
     stripe_subscription_id = db.Column(db.String(255), unique=True, nullable=True)
     stripe_customer_id = db.Column(db.String(255), nullable=True)
     status = db.Column(db.String(50), default='inactive')  # active, canceled, past_due, etc.
-    plan_type = db.Column(db.String(50), default='monthly')  # monthly, yearly
-    amount = db.Column(db.Numeric(10, 2), nullable=False)
+    plan_type = db.Column(db.String(50), default='free')  # free, basic, elite, advanced, annual
+    amount = db.Column(db.Numeric(10, 2), default=0)
     currency = db.Column(db.String(3), default='USD')
     current_period_start = db.Column(db.DateTime, nullable=True)
     current_period_end = db.Column(db.DateTime, nullable=True)
@@ -49,6 +182,8 @@ class Subscription(db.Model):
     
     def is_active(self):
         """Check if subscription is currently active"""
+        if self.plan_type == 'free':
+            return True  # Free plan is always "active"
         if self.status == 'active':
             if self.current_period_end:
                 return datetime.utcnow() < self.current_period_end
@@ -61,4 +196,13 @@ class Subscription(db.Model):
             remaining = self.current_period_end - datetime.utcnow()
             return max(0, remaining.days)
         return 0
+
+class QueryLog(db.Model):
+    __tablename__ = 'query_logs'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    topic = db.Column(db.String(255), nullable=True)
+    language = db.Column(db.String(50), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 

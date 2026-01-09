@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, flash, current_app
 from flask_login import login_required, current_user
-from models import db, User, Subscription
+from models import db, User, Subscription, PLANS
 from datetime import datetime, timedelta
 import stripe
 import os
@@ -11,31 +11,45 @@ payments_bp = Blueprint('payments', __name__)
 stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
 STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY', '')
 
-# Monthly subscription price (in cents) - $9.99/month
-MONTHLY_PRICE_ID = os.getenv('STRIPE_MONTHLY_PRICE_ID', '')
-MONTHLY_AMOUNT = 999  # $9.99 in cents
+# Plan prices (in cents)
+PLAN_PRICES = {
+    'free': 0,
+    'basic': 499,  # $4.99
+    'elite': 999,  # $9.99
+    'advanced': 1999,  # $19.99
+    'annual': 19999  # $199.99
+}
 
 @payments_bp.route('/pricing')
 def pricing():
     """Display pricing page"""
     return render_template('pricing.html', 
                          stripe_publishable_key=STRIPE_PUBLISHABLE_KEY,
-                         monthly_amount=MONTHLY_AMOUNT / 100)
+                         plans=PLANS)
 
 @payments_bp.route('/create-checkout-session', methods=['POST'])
 @login_required
 def create_checkout_session():
     """Create Stripe checkout session for subscription"""
     try:
-        plan_type = request.json.get('plan_type', 'monthly')
+        plan_type = request.json.get('plan_type', 'basic')
         
-        if plan_type != 'monthly':
-            return jsonify({'error': 'Only monthly plans are currently available', 'success': False}), 400
+        if plan_type == 'free':
+            # Free plan doesn't need payment
+            return jsonify({'error': 'Free plan does not require payment', 'success': False}), 400
+        
+        if plan_type not in PLANS:
+            return jsonify({'error': 'Invalid plan type', 'success': False}), 400
+        
+        plan = PLANS[plan_type]
+        price_cents = PLAN_PRICES.get(plan_type, 0)
+        
+        if price_cents == 0:
+            return jsonify({'error': 'This plan does not require payment', 'success': False}), 400
         
         # Create or retrieve Stripe customer
         customer_id = None
         if current_user.subscriptions:
-            # Check if user already has a Stripe customer ID
             existing_sub = Subscription.query.filter_by(
                 user_id=current_user.id,
                 stripe_customer_id__isnot=None
@@ -44,12 +58,14 @@ def create_checkout_session():
                 customer_id = existing_sub.stripe_customer_id
         
         if not customer_id:
-            # Create new Stripe customer
             customer = stripe.Customer.create(
                 email=current_user.email,
                 metadata={'user_id': str(current_user.id), 'username': current_user.username}
             )
             customer_id = customer.id
+        
+        # Determine interval
+        interval = 'month' if plan['interval'] == 'month' else 'year'
         
         # Create checkout session
         checkout_session = stripe.checkout.Session.create(
@@ -59,20 +75,20 @@ def create_checkout_session():
                 'price_data': {
                     'currency': 'usd',
                     'product_data': {
-                        'name': 'AI Article Generator - Monthly Subscription',
-                        'description': 'Unlimited article generation with AI'
+                        'name': f'AI Article Generator - {plan["name"]} Plan',
+                        'description': get_plan_description(plan_type)
                     },
                     'recurring': {
-                        'interval': 'month'
+                        'interval': interval
                     },
-                    'unit_amount': MONTHLY_AMOUNT,
+                    'unit_amount': price_cents,
                 },
                 'quantity': 1,
             }],
             mode='subscription',
             success_url=request.host_url + 'payment/success?session_id={CHECKOUT_SESSION_ID}',
             cancel_url=request.host_url + 'payment/cancel',
-            metadata={'user_id': str(current_user.id)}
+            metadata={'user_id': str(current_user.id), 'plan_type': plan_type}
         )
         
         return jsonify({
@@ -83,6 +99,17 @@ def create_checkout_session():
     
     except Exception as e:
         return jsonify({'error': str(e), 'success': False}), 500
+
+def get_plan_description(plan_type):
+    """Get description for plan"""
+    plan = PLANS.get(plan_type, {})
+    if plan.get('queries_per_day'):
+        return f'{plan["queries_per_day"]} queries per day'
+    elif plan.get('queries_per_week'):
+        return f'{plan["queries_per_week"]} queries per week'
+    elif plan.get('queries_per_month'):
+        return f'{plan["queries_per_month"]} queries per month'
+    return 'Unlimited queries'
 
 @payments_bp.route('/success')
 @login_required
@@ -107,6 +134,9 @@ def payment_success():
         subscription_id = session.subscription
         stripe_subscription = stripe.Subscription.retrieve(subscription_id)
         
+        # Get plan type from metadata
+        plan_type = session.metadata.get('plan_type', 'basic')
+        
         # Create or update subscription in database
         subscription = Subscription.query.filter_by(
             stripe_subscription_id=subscription_id
@@ -118,7 +148,7 @@ def payment_success():
                 stripe_subscription_id=subscription_id,
                 stripe_customer_id=stripe_subscription.customer,
                 status=stripe_subscription.status,
-                plan_type='monthly',
+                plan_type=plan_type,
                 amount=stripe_subscription.items.data[0].price.unit_amount / 100,
                 currency=stripe_subscription.currency.upper(),
                 current_period_start=datetime.fromtimestamp(stripe_subscription.current_period_start),
@@ -127,6 +157,7 @@ def payment_success():
             db.session.add(subscription)
         else:
             subscription.status = stripe_subscription.status
+            subscription.plan_type = plan_type
             subscription.current_period_start = datetime.fromtimestamp(stripe_subscription.current_period_start)
             subscription.current_period_end = datetime.fromtimestamp(stripe_subscription.current_period_end)
             subscription.updated_at = datetime.utcnow()
@@ -152,9 +183,16 @@ def payment_cancel():
 def dashboard():
     """User subscription dashboard"""
     subscription = current_user.get_active_subscription()
+    plan_type = current_user.get_plan()
+    plan = PLANS.get(plan_type, PLANS['free'])
+    remaining_queries = current_user.get_remaining_queries()
+    
     return render_template('dashboard.html', 
                          subscription=subscription,
-                         user=current_user)
+                         user=current_user,
+                         plan=plan,
+                         plan_type=plan_type,
+                         remaining_queries=remaining_queries)
 
 @payments_bp.route('/cancel-subscription', methods=['POST'])
 @login_required

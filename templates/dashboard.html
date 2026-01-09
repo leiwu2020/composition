@@ -182,6 +182,8 @@
             <h3>Account Information</h3>
             <p><strong>Username:</strong> {{ user.username }}</p>
             <p><strong>Email:</strong> {{ user.email }}</p>
+            <p><strong>Current Plan:</strong> {{ plan.name }}</p>
+            <p><strong>Queries Remaining:</strong> {{ remaining_queries }}</p>
             <p><strong>Member since:</strong> {{ user.created_at.strftime('%B %d, %Y') }}</p>
         </div>
 
