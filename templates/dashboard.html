@@ -189,11 +189,11 @@
 
         {% if subscription and subscription.is_active() %}
             <div class="subscription-card">
-                <h2>Active Subscription</h2>
+                <h2>Current Subscription</h2>
                 <div class="subscription-info">
                     <div class="info-item">
                         <label>Plan</label>
-                        <div class="value">{{ subscription.plan_type|title }}</div>
+                        <div class="value">{{ plan.name }}</div>
                     </div>
                     <div class="info-item">
                         <label>Status</label>
@@ -201,7 +201,17 @@
                     </div>
                     <div class="info-item">
                         <label>Amount</label>
-                        <div class="value">${{ "%.2f"|format(subscription.amount) }}/mo</div>
+                        <div class="value">
+                            {% if plan.price == 0 %}
+                                FREE
+                            {% else %}
+                                ${{ "%.2f"|format(plan.price) }}/{{ plan.interval }}
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="info-item">
+                        <label>Queries Remaining</label>
+                        <div class="value">{{ remaining_queries }}</div>
                     </div>
                     {% if subscription.days_remaining() > 0 %}
                         <div class="info-item">
@@ -215,7 +225,9 @@
                         Next billing date: {{ subscription.current_period_end.strftime('%B %d, %Y') }}
                     </p>
                 {% endif %}
-                <button class="btn btn-danger" onclick="cancelSubscription()">Cancel Subscription</button>
+                {% if plan_type != 'free' %}
+                    <button class="btn btn-danger" onclick="cancelSubscription()" style="margin-top: 15px;">Cancel Subscription</button>
+                {% endif %}
             </div>
         {% else %}
             <div class="no-subscription">
@@ -226,6 +238,48 @@
                 </a>
             </div>
         {% endif %}
+
+        <!-- Plan Upgrade/Downgrade Section -->
+        <div class="plans-section" style="margin-top: 40px;">
+            <h2 style="color: #333; margin-bottom: 20px; text-align: center;">Change Your Plan</h2>
+            <div class="plans-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-top: 20px;">
+                {% for plan_key, plan_data in all_plans.items() %}
+                <div class="plan-card" style="background: {% if plan_key == plan_type %}#e8f4f8{% else %}white{% endif %}; border: 2px solid {% if plan_key == plan_type %}#667eea{% else %}#ddd{% endif %}; border-radius: 15px; padding: 25px; text-align: center; transition: transform 0.2s;">
+                    <h3 style="color: #333; margin-bottom: 10px;">{{ plan_data.name }}</h3>
+                    <div style="font-size: 2em; color: #667eea; margin: 15px 0;">
+                        {% if plan_data.price == 0 %}
+                            FREE
+                        {% else %}
+                            ${{ "%.2f"|format(plan_data.price) }}
+                            <span style="font-size: 0.5em; color: #666;">/{{ plan_data.interval }}</span>
+                        {% endif %}
+                    </div>
+                    <div style="color: #666; margin: 15px 0; font-weight: 600;">
+                        {% if plan_data.queries_per_day %}
+                            {{ plan_data.queries_per_day }} queries/day
+                        {% elif plan_data.queries_per_week %}
+                            {{ plan_data.queries_per_week }} queries/week
+                        {% elif plan_data.queries_per_month %}
+                            {{ plan_data.queries_per_month }} queries/month
+                        {% endif %}
+                    </div>
+                    {% if plan_key == plan_type %}
+                        <button class="btn" style="background: #6c757d; color: white; cursor: not-allowed;" disabled>Current Plan</button>
+                    {% elif plan_data.price == 0 %}
+                        <button class="btn btn-primary" onclick="changePlan('{{ plan_key }}')">Switch to Free</button>
+                    {% else %}
+                        <button class="btn btn-primary" onclick="changePlan('{{ plan_key }}')">
+                            {% if plan_data.price > plan.price %}
+                                Upgrade
+                            {% else %}
+                                Downgrade
+                            {% endif %}
+                        </button>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
 
         <div class="nav-links">
             <a href="/">Generate Articles</a>
@@ -252,6 +306,41 @@
                 if (data.success) {
                     alert(data.message);
                     location.reload();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        async function changePlan(newPlanType) {
+            if (!confirm(`Are you sure you want to change your plan? This will update your subscription immediately.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/payment/change-plan', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        plan_type: newPlanType
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    if (data.requires_payment) {
+                        // Redirect to Stripe checkout
+                        window.location.href = data.checkout_url;
+                    } else {
+                        // Plan changed successfully (free plan or downgrade)
+                        alert(data.message || 'Plan changed successfully!');
+                        location.reload();
+                    }
                 } else {
                     alert('Error: ' + data.error);
                 }

@@ -11,14 +11,17 @@ payments_bp = Blueprint('payments', __name__)
 stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
 STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY', '')
 
-# Plan prices (in cents)
-PLAN_PRICES = {
-    'free': 0,
-    'basic': 499,  # $4.99
-    'elite': 999,  # $9.99
-    'advanced': 1999,  # $19.99
-    'annual': 19999  # $199.99
-}
+# Plan prices (in cents) - moved to models.py but keeping here for backward compatibility
+try:
+    from models import PLAN_PRICES
+except ImportError:
+    PLAN_PRICES = {
+        'free': 0,
+        'basic': 499,  # $4.99
+        'elite': 999,  # $9.99
+        'advanced': 1999,  # $19.99
+        'annual': 19999  # $199.99
+    }
 
 @payments_bp.route('/pricing')
 def pricing():
@@ -136,6 +139,24 @@ def payment_success():
         
         # Get plan type from metadata
         plan_type = session.metadata.get('plan_type', 'basic')
+        is_plan_change = session.metadata.get('is_plan_change', 'false') == 'true'
+        
+        # If this is a plan change, cancel the old subscription first
+        if is_plan_change:
+            old_subscription = Subscription.query.filter_by(
+                user_id=current_user.id,
+                status='active'
+            ).filter(Subscription.plan_type != plan_type).first()
+            
+            if old_subscription and old_subscription.stripe_subscription_id:
+                try:
+                    stripe.Subscription.modify(
+                        old_subscription.stripe_subscription_id,
+                        cancel_at_period_end=True
+                    )
+                    old_subscription.status = 'canceled'
+                except:
+                    pass
         
         # Create or update subscription in database
         subscription = Subscription.query.filter_by(
@@ -192,7 +213,129 @@ def dashboard():
                          user=current_user,
                          plan=plan,
                          plan_type=plan_type,
-                         remaining_queries=remaining_queries)
+                         remaining_queries=remaining_queries,
+                         all_plans=PLANS)
+
+@payments_bp.route('/change-plan', methods=['POST'])
+@login_required
+def change_plan():
+    """Change user's subscription plan"""
+    try:
+        data = request.json
+        new_plan_type = data.get('plan_type')
+        
+        if not new_plan_type or new_plan_type not in PLANS:
+            return jsonify({'error': 'Invalid plan type', 'success': False}), 400
+        
+        current_subscription = current_user.get_active_subscription()
+        current_plan_type = current_user.get_plan()
+        
+        # If switching to the same plan
+        if new_plan_type == current_plan_type:
+            return jsonify({'error': 'You are already on this plan', 'success': False}), 400
+        
+        new_plan = PLANS[new_plan_type]
+        
+        # If switching to free plan
+        if new_plan_type == 'free':
+            # Cancel existing subscription if any
+            if current_subscription and current_subscription.stripe_subscription_id:
+                try:
+                    stripe.Subscription.modify(
+                        current_subscription.stripe_subscription_id,
+                        cancel_at_period_end=True
+                    )
+                except:
+                    pass  # If Stripe fails, continue with local update
+            
+            # Create or update to free plan
+            if current_subscription:
+                current_subscription.plan_type = 'free'
+                current_subscription.status = 'active'
+                current_subscription.amount = 0
+                current_subscription.updated_at = datetime.utcnow()
+            else:
+                new_subscription = Subscription(
+                    user_id=current_user.id,
+                    plan_type='free',
+                    status='active',
+                    amount=0,
+                    current_period_start=datetime.utcnow(),
+                    current_period_end=datetime.utcnow() + timedelta(days=365)
+                )
+                db.session.add(new_subscription)
+            
+            db.session.commit()
+            return jsonify({
+                'success': True,
+                'message': 'Plan changed to Free successfully!',
+                'requires_payment': False
+            })
+        
+        # If switching to a paid plan (upgrade or downgrade)
+        # Check if user is upgrading or downgrading
+        current_price = PLANS.get(current_plan_type, PLANS['free']).get('price', 0)
+        new_price = new_plan.get('price', 0)
+        
+        # If downgrading to a cheaper paid plan or upgrading
+        # For paid plans, we need to go through Stripe checkout
+        try:
+            # Create or retrieve Stripe customer
+            customer_id = None
+            if current_subscription and current_subscription.stripe_customer_id:
+                customer_id = current_subscription.stripe_customer_id
+            else:
+                # Create new Stripe customer
+                customer = stripe.Customer.create(
+                    email=current_user.email,
+                    metadata={'user_id': str(current_user.id), 'username': current_user.username}
+                )
+                customer_id = customer.id
+            
+            # Determine interval
+            interval = 'month' if new_plan['interval'] == 'month' else 'year'
+            price_cents = PLAN_PRICES.get(new_plan_type, 0)
+            
+            # Create checkout session for plan change
+            checkout_session = stripe.checkout.Session.create(
+                customer=customer_id,
+                payment_method_types=['card'],
+                line_items=[{
+                    'price_data': {
+                        'currency': 'usd',
+                        'product_data': {
+                            'name': f'AI Article Generator - {new_plan["name"]} Plan',
+                            'description': get_plan_description(new_plan_type)
+                        },
+                        'recurring': {
+                            'interval': interval
+                        },
+                        'unit_amount': price_cents,
+                    },
+                    'quantity': 1,
+                }],
+                mode='subscription',
+                success_url=request.host_url + 'payment/success?session_id={CHECKOUT_SESSION_ID}',
+                cancel_url=request.host_url + 'payment/dashboard',
+                metadata={
+                    'user_id': str(current_user.id),
+                    'plan_type': new_plan_type,
+                    'is_plan_change': 'true'
+                }
+            )
+            
+            return jsonify({
+                'success': True,
+                'requires_payment': True,
+                'checkout_url': checkout_session.url,
+                'message': 'Redirecting to payment...'
+            })
+        
+        except Exception as e:
+            return jsonify({'error': f'Error creating checkout session: {str(e)}', 'success': False}), 500
+    
+    except Exception as e:
+        return jsonify({'error': str(e), 'success': False}), 500
 
 @payments_bp.route('/cancel-subscription', methods=['POST'])
 @login_required
