@@ -238,15 +238,25 @@
                     {% endif %}
                 </ul>
                 
-                <button class="btn-subscribe {% if plan_key == 'free' %}btn-free{% endif %}" 
-                        onclick="subscribe('{{ plan_key }}')" 
-                        {% if plan_key == 'free' %}disabled{% endif %}>
-                    {% if plan_key == 'free' %}
-                    Current Plan
-                    {% else %}
-                    Subscribe Now
-                    {% endif %}
-                </button>
+                {% if plan_key == current_plan_type %}
+                    <button class="btn-subscribe btn-free" disabled>
+                        Current Plan
+                    </button>
+                {% elif plan_key == 'free' %}
+                    <button class="btn-subscribe btn-free" onclick="subscribe('{{ plan_key }}')">
+                        Switch to Free
+                    </button>
+                {% else %}
+                    <button class="btn-subscribe" onclick="subscribe('{{ plan_key }}')">
+                        {% if current_plan_type != 'free' and plans[current_plan_type].price < plan_data.price %}
+                            Upgrade
+                        {% elif current_plan_type != 'free' and plans[current_plan_type].price > plan_data.price %}
+                            Downgrade
+                        {% else %}
+                            Subscribe Now
+                        {% endif %}
+                    </button>
+                {% endif %}
             </div>
             {% endfor %}
         </div>

@@ -45,6 +45,7 @@ def pricing():
         if session:
             session.expire(current_user, ['subscriptions'])
         current_plan_type = current_user.get_plan()
+        print(f"Pricing page - User: {current_user.username}, Current plan: {current_plan_type}")
     
     return render_template('pricing.html', 
                          stripe_publishable_key=STRIPE_PUBLISHABLE_KEY,
