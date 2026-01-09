@@ -35,9 +35,21 @@ except ImportError:
 @payments_bp.route('/pricing')
 def pricing():
     """Display pricing page"""
+    # Get user's current plan if logged in
+    current_plan_type = 'free'
+    if current_user.is_authenticated:
+        # Refresh user to get latest subscription data
+        db.session.refresh(current_user)
+        from sqlalchemy.orm import object_session
+        session = object_session(current_user)
+        if session:
+            session.expire(current_user, ['subscriptions'])
+        current_plan_type = current_user.get_plan()
+    
     return render_template('pricing.html', 
                          stripe_publishable_key=STRIPE_PUBLISHABLE_KEY,
-                         plans=PLANS)
+                         plans=PLANS,
+                         current_plan_type=current_plan_type)
 
 @payments_bp.route('/create-checkout-session', methods=['POST'])
 @login_required
