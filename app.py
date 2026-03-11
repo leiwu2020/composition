@@ -18,8 +18,8 @@ from models import db, User, QueryLog, PLANS
 from auth import auth_bp
 from payments import payments_bp
 
-# Load environment variables
-load_dotenv()
+# Load environment variables (override any stale shell values)
+load_dotenv(override=True)
 
 app = Flask(__name__)
 CORS(app)
@@ -210,16 +210,35 @@ def index():
     if not current_user.is_authenticated:
         return redirect(url_for('auth.login'))
     
-    # Get user's plan info
-    plan_type = current_user.get_plan()
-    plan = PLANS.get(plan_type, PLANS['free'])
-    remaining_queries = current_user.get_remaining_queries()
+    # Force fresh query to get latest plan info (important after plan changes)
+    from sqlalchemy.orm import object_session
+    from flask import make_response
     
-    return render_template('index.html', 
-                         user=current_user,
+    session = object_session(current_user)
+    if session:
+        session.expire_all()
+    
+    # Get fresh user from database
+    fresh_user = db.session.query(User).filter_by(id=current_user.id).first()
+    
+    # Get user's plan info from fresh user object
+    plan_type = fresh_user.get_plan()
+    plan = PLANS.get(plan_type, PLANS['free'])
+    remaining_queries = fresh_user.get_remaining_queries()
+    
+    # Create response with cache headers
+    response = make_response(render_template('index.html', 
+                         user=fresh_user,
                          plan=plan,
                          plan_type=plan_type,
-                         remaining_queries=remaining_queries)
+                         remaining_queries=remaining_queries))
+    
+    # Add cache-control headers for the main page too
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    
+    return response
 
 @app.route('/generate', methods=['POST'])
 @login_required

@@ -77,13 +77,19 @@ class User(UserMixin, db.Model):
         # Query for active subscriptions, ordered by most recent first
         # CRITICAL: Only get subscriptions with status='active' (exclude 'canceled')
         # Use a fresh query to bypass any cache
+        # IMPORTANT: Order by updated_at DESC first, then created_at DESC to ensure most recent is first
+        # This is critical for downgrades where new subscription should be returned even if timestamps are close
         subscription = db.session.query(Subscription).filter(
             Subscription.user_id == self.id,
             Subscription.status == 'active'  # CRITICAL: Only active subscriptions
         ).filter(
             (Subscription.current_period_end.is_(None)) | 
             (Subscription.current_period_end > now)
-        ).order_by(Subscription.updated_at.desc(), Subscription.created_at.desc()).first()
+        ).order_by(
+            Subscription.updated_at.desc(),  # Most recently updated first
+            Subscription.created_at.desc(),  # Then most recently created
+            Subscription.id.desc()  # Finally by ID as tiebreaker
+        ).first()
         
         # Debug: Log what we found
         if subscription:
