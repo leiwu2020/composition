@@ -45,6 +45,14 @@ PLANS = {
         'queries_per_month': 100,
         'queries_per_week': None,
         'queries_per_day': None
+    },
+    'unlimited': {
+        'name': 'Unlimited',
+        'price': 0,
+        'interval': 'month',
+        'queries_per_month': None,
+        'queries_per_week': None,
+        'queries_per_day': None
     }
 }
 
@@ -204,8 +212,8 @@ class User(UserMixin, db.Model):
                 user_id=self.id
             ).filter(QueryLog.created_at >= month_start).count()
             return max(0, plan['queries_per_month'] - used)
-        
-        return 0
+
+        return -1  # Unlimited
 
 class Subscription(db.Model):
     __tablename__ = 'subscriptions'
