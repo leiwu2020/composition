@@ -136,36 +136,21 @@
             border-color: #667eea;
         }
 
-        /* Pinyin styling - Pinyin on line above, characters stay inline */
-        .pinyin-wrapper {
-            display: inline-block;
-            position: relative;
-            vertical-align: baseline;
-            text-align: center;
-            margin: 0 1px;
-            padding-top: 1.2em;
+        /* Ruby / Pinyin styling */
+        .article-editor ruby {
+            ruby-align: center;
         }
 
-        .pinyin-line {
-            position: absolute;
-            top: 0;
-            left: 50%;
-            transform: translateX(-50%);
-            font-size: 0.65em;
-            color: #666;
-            line-height: 1;
-            white-space: nowrap;
+        .article-editor rt {
+            font-size: 0.55em;
+            color: #555;
             font-family: 'Arial', sans-serif;
-            width: 100%;
-            text-align: center;
-            pointer-events: none;
+            letter-spacing: 0;
         }
 
-        .char-inline {
-            display: inline-block;
-            font-size: 1em;
-            line-height: 1.8;
-            vertical-align: baseline;
+        /* Extra line-height so Pinyin doesn't overlap lines above */
+        .article-editor {
+            line-height: 2.4 !important;
         }
 
         .download-section {
@@ -283,7 +268,7 @@
                         <option value="Japanese">Japanese (日本語)</option>
                         <option value="Korean">Korean (한국어)</option>
                     </select>
-                    <div class="info-text">Note: Chinese articles will include Pinyin for difficult characters</div>
+                    <div class="info-text">Note: Chinese articles will include Pinyin above every character</div>
                 </div>
 
                 <div class="form-group">
@@ -314,7 +299,7 @@
                         <option value="12">Grade 12</option>
                         <option value="university">University/Adult</option>
                     </select>
-                    <div class="info-text">Select the grade level to determine which Chinese characters need Pinyin</div>
+                    <div class="info-text">Select the grade level for appropriate vocabulary complexity</div>
                 </div>
 
                 <div class="form-group">
@@ -434,7 +419,7 @@
                 if (data.success) {
                     const editor = document.getElementById('articleEditor');
                     // Check if article contains HTML (for Chinese with Pinyin)
-                    if (data.article.includes('<span class="pinyin-wrapper">') || data.article.includes('<span class="pinyin-char">')) {
+                    if (data.article.includes('<ruby>') || data.article.includes('<span class="pinyin-wrapper">') || data.article.includes('<span class="pinyin-char">')) {
                         editor.innerHTML = data.article.replace(/\n/g, '<br>');
                     } else {
                         editor.textContent = data.article;

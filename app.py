@@ -177,31 +177,22 @@ def is_hard_chinese_char(char, grade=1):
     return '\u4e00' <= char <= '\u9fff' and char not in grade_set
 
 def add_pinyin_to_chinese(text, grade=1):
-    """Add Pinyin to hard Chinese characters - Pinyin on line above, characters stay inline"""
+    """Add Pinyin above every Chinese character using ruby annotations."""
     result = []
-    i = 0
-    while i < len(text):
-        char = text[i]
-        if is_hard_chinese_char(char, grade):
-            # Get Pinyin for this character
+    for char in text:
+        if '\u4e00' <= char <= '\u9fff':
             pinyin = lazy_pinyin(char, style=Style.TONE)[0]
-            # Format with Pinyin above the character, but keep character inline
-            result.append(f'<span class="pinyin-wrapper"><span class="pinyin-line">{pinyin}</span><span class="char-inline">{char}</span></span>')
+            result.append(f'<ruby>{char}<rt>{pinyin}</rt></ruby>')
+        elif char == '\n':
+            result.append('<br>')
+        elif char == '<':
+            result.append('&lt;')
+        elif char == '>':
+            result.append('&gt;')
+        elif char == '&':
+            result.append('&amp;')
         else:
-            # Handle newlines - convert to <br> for HTML
-            if char == '\n':
-                result.append('<br>')
-            else:
-                # Escape HTML special characters for regular text
-                if char == '<':
-                    result.append('&lt;')
-                elif char == '>':
-                    result.append('&gt;')
-                elif char == '&':
-                    result.append('&amp;')
-                else:
-                    result.append(char)
-        i += 1
+            result.append(char)
     return ''.join(result)
 
 @app.route('/')
@@ -375,132 +366,102 @@ Article:"""
         return jsonify({'error': str(e), 'success': False}), 500
 
 def html_to_text_with_pinyin_above(html_content):
-    """Convert HTML content to text with Pinyin on line above characters"""
+    """Convert HTML with <ruby>/<rt> (or legacy spans) to plain text with Pinyin on line above."""
     import re
-    
-    # First, handle <br> tags
-    text = html_content.replace('<br>', '\n').replace('<br/>', '\n')
-    
-    # Store Pinyin-char pairs
+
+    text = html_content.replace('<br>', '\n').replace('<br/>', '\n').replace('<br />', '\n')
+
+    # --- Handle <ruby> format ---
     pinyin_pairs = []
-    pair_counter = 0
-    
-    def extract_and_replace(match):
-        nonlocal pair_counter
+
+    def extract_ruby(match):
+        char = match.group(1).strip()
+        pinyin = match.group(2).strip()
+        idx = len(pinyin_pairs)
+        pinyin_pairs.append((pinyin, char))
+        return f'__PINYIN_{idx}__'
+
+    text = re.sub(r'<ruby>([^<]+)<rt>([^<]+)</rt></ruby>', extract_ruby, text)
+
+    # --- Handle legacy span format ---
+    def extract_span(match):
         full_match = match.group(0)
-        
-        # Try new format first
         pinyin_match = re.search(r'<span class="pinyin-line">([^<]+)</span>', full_match)
         char_match = re.search(r'<span class="char-inline">([^<]+)</span>', full_match)
-        
-        # If not found, try old format
         if not pinyin_match or not char_match:
             pinyin_match = re.search(r'<span class="pinyin">([^<]+)</span>', full_match)
             char_match = re.search(r'<span class="char">([^<]+)</span>', full_match)
-        
         if pinyin_match and char_match:
-            idx = pair_counter
-            pair_counter += 1
+            idx = len(pinyin_pairs)
             pinyin_pairs.append((pinyin_match.group(1), char_match.group(1)))
             return f'__PINYIN_{idx}__'
         return match.group(0)
-    
-    # Replace Pinyin spans with markers
-    text = re.sub(r'<span class="pinyin-wrapper">.*?</span>', extract_and_replace, text, flags=re.DOTALL)
-    text = re.sub(r'<span class="pinyin-char">.*?</span>', extract_and_replace, text, flags=re.DOTALL)
-    
-    # Remove all remaining HTML tags
+
+    text = re.sub(r'<span class="pinyin-wrapper">.*?</span>', extract_span, text, flags=re.DOTALL)
+    text = re.sub(r'<span class="pinyin-char">.*?</span>', extract_span, text, flags=re.DOTALL)
+
+    # Remove remaining HTML tags and unescape entities
     text = re.sub(r'<[^>]+>', '', text)
     text = html.unescape(text)
-    
-    # Process the text line by line
+
+    # Build two-line output (pinyin line above char line) for each text line
     result_lines = []
-    all_lines = text.split('\n')
-    
-    for line in all_lines:
+    for line in text.split('\n'):
         if '__PINYIN_' not in line:
-            # No Pinyin in this line
             result_lines.append(line)
-        else:
-            # Process line with Pinyin markers
-            pinyin_line_parts = []
-            char_line_parts = []
-            i = 0
-            
-            while i < len(line):
-                # Look for Pinyin marker
-                marker_match = re.search(r'__PINYIN_(\d+)__', line[i:])
-                
-                if marker_match:
-                    # Add everything before the marker
-                    before_text = line[i:i+marker_match.start()]
-                    for char in before_text:
-                        char_line_parts.append(char)
-                        # For Pinyin line, add appropriate spacing
-                        if '\u4e00' <= char <= '\u9fff':
-                            # Chinese character - needs 2 spaces typically
-                            pinyin_line_parts.append('  ')
-                        elif char == ' ':
-                            pinyin_line_parts.append(' ')
-                        else:
-                            # Regular character
-                            pinyin_line_parts.append(' ')
-                    
-                    # Add the Pinyin and character
-                    idx = int(marker_match.group(1))
-                    if idx < len(pinyin_pairs):
-                        pinyin, char = pinyin_pairs[idx]
-                        # Calculate width to align properly
-                        # Chinese characters are typically wider, so use max of both
-                        width = max(len(pinyin), len(char), 2)
-                        pinyin_line_parts.append(pinyin.ljust(width))
-                        char_line_parts.append(char.ljust(width))
-                    
-                    # Move past the marker
-                    i += marker_match.end()
-                else:
-                    # No more markers, add rest of line
-                    remaining = line[i:]
-                    for char in remaining:
-                        char_line_parts.append(char)
-                        if '\u4e00' <= char <= '\u9fff':
-                            pinyin_line_parts.append('  ')
-                        elif char == ' ':
-                            pinyin_line_parts.append(' ')
-                        else:
-                            pinyin_line_parts.append(' ')
-                    break
-            
-            # Build the two lines
-            pinyin_line = ''.join(pinyin_line_parts).rstrip()
-            char_line = ''.join(char_line_parts).rstrip()
-            
-            # Only add Pinyin line if it has content
-            if pinyin_line.strip():
-                result_lines.append(pinyin_line)
-            result_lines.append(char_line)
-    
+            continue
+
+        pinyin_parts = []
+        char_parts = []
+        i = 0
+        while i < len(line):
+            marker_match = re.search(r'__PINYIN_(\d+)__', line[i:])
+            if marker_match:
+                before = line[i:i + marker_match.start()]
+                for ch in before:
+                    char_parts.append(ch)
+                    pinyin_parts.append('  ' if '\u4e00' <= ch <= '\u9fff' else ' ')
+                idx = int(marker_match.group(1))
+                if idx < len(pinyin_pairs):
+                    py, ch = pinyin_pairs[idx]
+                    width = max(len(py), 2)
+                    pinyin_parts.append(py.ljust(width))
+                    char_parts.append(ch.ljust(width))
+                i += marker_match.end()
+            else:
+                for ch in line[i:]:
+                    char_parts.append(ch)
+                    pinyin_parts.append('  ' if '\u4e00' <= ch <= '\u9fff' else ' ')
+                break
+
+        pinyin_line = ''.join(pinyin_parts).rstrip()
+        char_line = ''.join(char_parts).rstrip()
+        if pinyin_line.strip():
+            result_lines.append(pinyin_line)
+        result_lines.append(char_line)
+
     return '\n'.join(result_lines)
 
 def html_to_text(html_content):
-    """Convert HTML content to plain text, handling Pinyin format (legacy - puts pinyin on same line)"""
+    """Convert HTML to plain text, rendering Pinyin as char(pinyin)."""
     import re
-    # Replace Pinyin HTML spans with character(pinyin) format for text
-    # Pattern: <span class="pinyin-wrapper"><span class="pinyin-line">pinyin</span><span class="char-inline">char</span></span>
-    def replace_pinyin(match):
+
+    # Handle <ruby> format
+    text = re.sub(r'<ruby>([^<]+)<rt>([^<]+)</rt></ruby>',
+                  lambda m: f"{m.group(1)}({m.group(2)})", html_content)
+
+    # Handle legacy span format
+    def replace_span(match):
         full_match = match.group(0)
         pinyin_match = re.search(r'<span class="pinyin-line">([^<]+)</span>', full_match)
         char_match = re.search(r'<span class="char-inline">([^<]+)</span>', full_match)
         if pinyin_match and char_match:
             return f"{char_match.group(1)}({pinyin_match.group(1)})"
         return match.group(0)
-    
-    # Replace Pinyin spans (both old and new format for compatibility)
-    text = re.sub(r'<span class="pinyin-wrapper">.*?</span>', replace_pinyin, html_content)
-    text = re.sub(r'<span class="pinyin-char">.*?</span>', replace_pinyin, html_content)
-    # Remove remaining HTML tags
+
+    text = re.sub(r'<span class="pinyin-wrapper">.*?</span>', replace_span, text, flags=re.DOTALL)
+    text = re.sub(r'<span class="pinyin-char">.*?</span>', replace_span, text, flags=re.DOTALL)
     text = re.sub(r'<[^>]+>', '', text)
-    # Decode HTML entities
     text = html.unescape(text)
     return text
 
@@ -520,7 +481,7 @@ def download_article():
             return jsonify({'error': 'Article content is required'}), 400
         
         # Check if article contains HTML (Pinyin format)
-        is_html = '<span class="pinyin-wrapper">' in article or '<span class="pinyin-char">' in article
+        is_html = '<ruby>' in article or '<span class="pinyin-wrapper">' in article or '<span class="pinyin-char">' in article
         
         if format_type == 'txt':
             # Convert HTML to text with Pinyin above if needed
@@ -655,64 +616,17 @@ def download_article():
             max-width: 800px;
             margin: 40px auto;
             padding: 20px;
-            line-height: 1.8;
+            line-height: 2.2;
             font-size: 1em;
         }}
-        
-        /* Pinyin styling - Pinyin on line above, characters stay inline */
-        .pinyin-wrapper {{
-            display: inline-block;
-            position: relative;
-            vertical-align: baseline;
-            text-align: center;
-            margin: 0 1px;
-            padding-top: 1.2em;
+        ruby {{
+            ruby-align: center;
         }}
-        
-        .pinyin-line {{
-            position: absolute;
-            top: 0;
-            left: 50%;
-            transform: translateX(-50%);
-            font-size: 0.65em;
-            color: #666;
-            line-height: 1;
-            white-space: nowrap;
+        rt {{
+            font-size: 0.55em;
+            color: #555;
             font-family: 'Arial', sans-serif;
-            width: 100%;
-            text-align: center;
-            pointer-events: none;
-        }}
-        
-        .char-inline {{
-            display: inline-block;
-            font-size: 1em;
-            line-height: 1.8;
-            vertical-align: baseline;
-        }}
-        
-        /* Legacy support */
-        .pinyin-char {{
-            display: inline-block;
-            text-align: center;
-            vertical-align: top;
-            line-height: 1.2;
-            margin: 0 1px;
-        }}
-        
-        .pinyin-char .pinyin {{
-            display: block;
-            font-size: 0.65em;
-            color: #666;
-            line-height: 1;
-            margin-bottom: 2px;
-            font-family: 'Arial', sans-serif;
-        }}
-        
-        .pinyin-char .char {{
-            display: block;
-            font-size: 1em;
-            line-height: 1.2;
+            letter-spacing: 0;
         }}
     </style>
 </head>
