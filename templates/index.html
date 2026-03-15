@@ -143,7 +143,7 @@
 
         .article-editor rt {
             font-size: 0.55em;
-            color: #555;
+            color: #888;
             font-family: 'Arial', sans-serif;
             letter-spacing: 0;
         }
@@ -151,6 +151,94 @@
         /* Extra line-height so Pinyin doesn't overlap lines above */
         .article-editor {
             line-height: 2.4 !important;
+        }
+
+        /* Formatting toolbar */
+        .format-toolbar {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 6px;
+            padding: 10px 14px;
+            background: #f1f3f5;
+            border: 2px solid #e0e0e0;
+            border-bottom: none;
+            border-radius: 8px 8px 0 0;
+        }
+
+        .toolbar-group {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .toolbar-divider {
+            width: 1px;
+            height: 24px;
+            background: #ccc;
+            margin: 0 4px;
+        }
+
+        .format-toolbar select {
+            padding: 4px 6px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 0.88em;
+            background: white;
+            cursor: pointer;
+            height: 30px;
+        }
+
+        .fmt-btn {
+            width: 30px;
+            height: 30px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background: white;
+            cursor: pointer;
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.15s;
+        }
+
+        .fmt-btn:hover {
+            background: #e0e0e0;
+        }
+
+        .fmt-btn.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .color-btn {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            padding: 0 8px;
+            height: 30px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background: white;
+            cursor: pointer;
+            font-size: 0.88em;
+            font-weight: 600;
+        }
+
+        .color-btn input[type="color"] {
+            width: 20px;
+            height: 20px;
+            border: none;
+            padding: 0;
+            cursor: pointer;
+            background: none;
+        }
+
+        /* Make the toolbar and editor flush */
+        #articleSection .article-editor {
+            border-radius: 0 0 8px 8px;
         }
 
         .download-section {
@@ -323,6 +411,67 @@
 
             <div class="article-section" id="articleSection" style="display: none;">
                 <h2 style="margin-bottom: 15px; color: #333;">Your Article</h2>
+
+                <!-- Formatting toolbar -->
+                <div class="format-toolbar">
+                    <div class="toolbar-group">
+                        <select id="fontFamily" title="Font Family" onchange="applyWholeStyle()">
+                            <option value="Georgia, serif">Georgia</option>
+                            <option value="'Times New Roman', Times, serif">Times New Roman</option>
+                            <option value="Arial, Helvetica, sans-serif">Arial</option>
+                            <option value="'Segoe UI', Tahoma, sans-serif">Segoe UI</option>
+                            <option value="'Courier New', monospace">Courier New</option>
+                            <option value="'SimSun', STSong, serif">宋体 SimSun</option>
+                            <option value="'SimHei', STHeiti, sans-serif">黑体 SimHei</option>
+                            <option value="'KaiTi', STKaiti, serif">楷体 KaiTi</option>
+                            <option value="'Microsoft YaHei', 'PingFang SC', sans-serif">微软雅黑</option>
+                        </select>
+                    </div>
+
+                    <div class="toolbar-group">
+                        <select id="fontSize" title="Font Size" onchange="applyWholeStyle()">
+                            <option value="12px">12</option>
+                            <option value="14px">14</option>
+                            <option value="16px" selected>16</option>
+                            <option value="18px">18</option>
+                            <option value="20px">20</option>
+                            <option value="24px">24</option>
+                            <option value="28px">28</option>
+                            <option value="32px">32</option>
+                        </select>
+                        <span style="font-size:0.82em; color:#666;">px</span>
+                    </div>
+
+                    <div class="toolbar-divider"></div>
+
+                    <div class="toolbar-group">
+                        <label class="color-btn" title="Text Color">
+                            <span style="font-weight:700;">A</span>
+                            <input type="color" id="textColor" value="#333333" oninput="applyWholeStyle()">
+                        </label>
+                        <label class="color-btn" title="Background Color">
+                            <span style="font-size:1em;">🖊</span>
+                            <input type="color" id="bgColor" value="#ffffff" oninput="applyBgColor()">
+                        </label>
+                    </div>
+
+                    <div class="toolbar-divider"></div>
+
+                    <div class="toolbar-group">
+                        <button class="fmt-btn" id="btn-bold" onclick="toggleFormat('bold')" title="Bold"><b>B</b></button>
+                        <button class="fmt-btn" id="btn-italic" onclick="toggleFormat('italic')" title="Italic"><i>I</i></button>
+                        <button class="fmt-btn" id="btn-underline" onclick="toggleFormat('underline')" title="Underline"><u>U</u></button>
+                    </div>
+
+                    <div class="toolbar-divider"></div>
+
+                    <div class="toolbar-group">
+                        <button class="fmt-btn" onclick="toggleFormat('justifyLeft')" title="Align Left">&#8676;</button>
+                        <button class="fmt-btn" onclick="toggleFormat('justifyCenter')" title="Center">&#8801;</button>
+                        <button class="fmt-btn" onclick="toggleFormat('justifyRight')" title="Align Right">&#8677;</button>
+                    </div>
+                </div>
+
                 <div class="article-editor" id="articleEditor" contenteditable="true" placeholder="Your generated article will appear here. You can edit it directly."></div>
                 
                 <div class="download-section">
@@ -505,6 +654,38 @@
         document.addEventListener('DOMContentLoaded', function() {
             toggleGradeSelector();
         });
+
+        // Apply font / size / color to the whole article editor
+        function applyWholeStyle() {
+            const editor = document.getElementById('articleEditor');
+            editor.style.fontFamily = document.getElementById('fontFamily').value;
+            editor.style.fontSize   = document.getElementById('fontSize').value;
+            editor.style.color      = document.getElementById('textColor').value;
+        }
+
+        function applyBgColor() {
+            document.getElementById('articleEditor').style.backgroundColor =
+                document.getElementById('bgColor').value;
+        }
+
+        // Bold / italic / underline / alignment on selected text
+        function toggleFormat(cmd) {
+            document.getElementById('articleEditor').focus();
+            document.execCommand(cmd, false, null);
+            updateActiveButtons();
+        }
+
+        // Highlight active bold/italic/underline buttons
+        function updateActiveButtons() {
+            ['bold', 'italic', 'underline'].forEach(cmd => {
+                const btn = document.getElementById('btn-' + cmd);
+                if (btn) {
+                    btn.classList.toggle('active', document.queryCommandState(cmd));
+                }
+            });
+        }
+
+        document.addEventListener('selectionchange', updateActiveButtons);
     </script>
 </body>
 </html>
