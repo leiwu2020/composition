@@ -14,7 +14,7 @@ from io import BytesIO
 import html
 import platform
 from dotenv import load_dotenv
-from models import db, User, QueryLog, PLANS
+from models import db, User, QueryLog, Subscription, PLANS
 from auth import auth_bp
 from payments import payments_bp
 
