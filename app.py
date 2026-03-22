@@ -651,9 +651,53 @@ def download_article():
     except Exception as e:
         return jsonify({'error': str(e), 'success': False}), 500
 
-# Create database tables
+# Create database tables and seed required accounts
+def seed_accounts():
+    """Create built-in accounts if they don't exist."""
+    from werkzeug.security import generate_password_hash
+    from datetime import datetime, timedelta
+
+    accounts = [
+        {
+            'username': 'Eric',
+            'email': 'eric@composition.app',
+            'password': 'Eric0625!',
+            'plan': 'unlimited',
+        }
+    ]
+
+    for acc in accounts:
+        user = User.query.filter_by(username=acc['username']).first()
+        if not user:
+            user = User(
+                username=acc['username'],
+                email=acc['email'],
+                password_hash=generate_password_hash(acc['password']),
+                is_active=True,
+            )
+            db.session.add(user)
+            db.session.flush()
+            print(f"Seeded user: {acc['username']}")
+
+        # Ensure unlimited subscription exists and is active
+        sub = Subscription.query.filter_by(user_id=user.id, plan_type=acc['plan']).first()
+        if not sub:
+            sub = Subscription(
+                user_id=user.id,
+                plan_type=acc['plan'],
+                status='active',
+                amount=0,
+                current_period_start=datetime.utcnow(),
+                current_period_end=datetime.utcnow() + timedelta(days=36500),  # 100 years
+            )
+            db.session.add(sub)
+            print(f"Seeded {acc['plan']} subscription for: {acc['username']}")
+
+    db.session.commit()
+
 with app.app_context():
     db.create_all()
+    seed_accounts()
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
