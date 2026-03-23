@@ -661,10 +661,14 @@ def seed_accounts():
         {
             'username': 'Eric',
             'email': 'eric@composition.app',
-            'password': 'Eric0625!',
+            'password': os.getenv('ERIC_PASSWORD', ''),
             'plan': 'unlimited',
         }
     ]
+
+    if not accounts[0]['password']:
+        print("WARNING: ERIC_PASSWORD env var not set, skipping Eric account seed.")
+        return
 
     for acc in accounts:
         user = User.query.filter_by(username=acc['username']).first()
